@@ -1,0 +1,1 @@
+add_executable(serial_mmp serial_mmp.c)
