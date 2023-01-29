@@ -1,23 +1,7 @@
-#include <stdlib.h>
 #include "../utils/utils.h"
+#include <string.h>
 
-#define MIN -10
-#define MAX 10
-
-void alloc_structs(float** A, float** B, int dims) {
-   *A = (float*)malloc(dims*dims*sizeof(float));
-   *B = (float*)malloc(dims*dims*sizeof(float));
-}
-
-void populate_matrix(float* mat, int dims) {
-
-   int i, j;
-   for (i=0; i<dims; i++){
-      for (j=0; j<dims; j++){
-         mat[i*dims+j] = ((float)rand()/RAND_MAX)*(MAX - MIN) + MIN;
-      }
-   }
-}
+bool ELLPACK = 0;
 
 float* product_kji(float* A, float* B, float* C, int dims, struct timeval *t1, struct timeval *t2) {
    float* D = (float*)malloc(dims*dims*sizeof(float));
@@ -39,32 +23,57 @@ float* product_kji(float* A, float* B, float* C, int dims, struct timeval *t1, s
    return D;
 }
 
+
 int main(int argc, char** argv) {
 
-    float* A = NULL;
-    float* B = NULL;
-    float* C = NULL;
+    MM_typecode t;
+    FILE *f;
+    CSR* csr;
+    ELL* ell;
 
-    struct timeval t1;
-    struct timeval t2;
-
-    int dims;
-
-    alloc_structs(&A, &B, dims);
-    populate_matrix(A, dims);
-    populate_matrix(B, dims);
-    if(A == NULL || B == NULL || C == NULL){
-        fprintf(stderr, "Malloc failed.");
+    // check the correct use of the program
+    if (argc < 3){
+        fprintf(stderr, "Usage: %s [mm-filename] [storage-format]\n", argv[0]);
+        exit(-1);
+    } else if ((f = fopen(argv[1], "r")) == NULL) { //check the correct opening of the matrix file
         exit(-1);
     }
 
-    C = product_kji(A, B, C, dims, &t1, &t2);
+    // process the first line of file and identify the matrix type
+    if (mm_read_banner(f, &t) != 0){
+        printf("Could not process Matrix Market banner.\n");
+        exit(-1);
+    }
 
-    get_mflops(t2.tv_sec - t1.tv_sec, dims);
+    check_mat_type(t);
 
-    free(A);
-    free(B);
-    free(C);
+    // convert to wanted storage format
+    if (strcmp(argv[2], "ellpack") == 0) {
+        ELLPACK = 1;
+        ell = (ELL*) malloc(sizeof(ELL));
+        error_handler(ell);
+
+        read_mm_ell(f, &ell, t);
+        fclose(f);
+    } else {
+        read_mm_csr(f, &csr, t);
+        fclose(f);
+    }
+
+    // write matrix to stdout
+    /*
+    mm_write_banner(stdout, t);
+    mm_write_mtx_crd_size(stdout, M, N, NZ);
+    for (i=0; i < NZ; i++) {
+        fprintf(stdout, "%d %d %20.19g\n", I[i] + 1, J[i] + 1, val[i]);
+    }
+    */
+
+    //TODO: populate multivector
+    //TODO: perform product
+    //TODO: store output
 
     return 0;
-} 
+}
+
+
