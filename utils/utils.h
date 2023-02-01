@@ -10,14 +10,11 @@
 
 #endif //SCPA_PROJECT_UTILS_H
 
-/**
- * Non-zero element structure:
- * used to cope with column ordering
- * */
 typedef struct elem {
-    int i;
     int j;
     double val;
+    int nz; // metadata used in head node to count number of non-zeros in the row
+    struct elem* next;
 } Elem;
 
 /**
@@ -32,7 +29,7 @@ typedef struct elem {
  * @param JA array of non-zeros col indices
  * @param AS array of non-zero values
  * */
-typedef struct matrix_csr {
+typedef struct csr {
     int M;
     int N;
     int* IRP;
@@ -49,7 +46,7 @@ typedef struct matrix_csr {
  * @param JA 2D array of non-zeros col indices
  * @param AS 2D array of non-zero values
  * */
-typedef struct matrix_ell {
+typedef struct ell {
     int M;
     int N;
     int MAXNZ;

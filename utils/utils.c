@@ -1,95 +1,67 @@
 #include "utils.h"
 
-void quicksort(Elem** elems, int first, int last) {
-    int i, j, pivot;
-    Elem temp;
+void insert_in_row(Elem*** arr, Elem** node, int idx) {
+    Elem* head = (*arr)[idx];
 
-    if(first < last){
-        pivot = first;
-        i = first;
-        j = last;
-
-        while(i < j){
-            while(elems[i]->i <= elems[pivot]->i && i < last) { i++; }
-            while(elems[j]->i > elems[pivot]->i) { j--; }
-            if(i < j){
-                temp = *elems[i];
-                *elems[i] = *elems[j];
-                *elems[j] = temp;
-            }
+    if (head == NULL) {
+        (*node)->nz = 1;
+        (*arr)[idx] = *node;
+    } else {
+        Elem* prev = NULL;
+        Elem* curr = head;
+        while (curr != NULL) {
+            prev = curr;
+            curr = curr->next;
         }
-
-        temp = *elems[pivot];
-        *elems[pivot] = *elems[j];
-        *elems[j] = temp;
-
-        quicksort(elems, first, j-1);
-        quicksort(elems, j+1, last);
+        prev->next = *node;
+        head->nz++;
     }
 }
 
-void expand_symmetry(Elem **elems, int *nz, int num_diag) {
-    int i, idx, new_nz = 2*(*nz)-num_diag;
-    *elems = (Elem*) realloc(*elems, new_nz*sizeof(Elem));
-
-    idx = 0;
-    for (i = 0; i < *nz; i++) {
-        if ((*elems)[i].i == (*elems)[i].j) {
-            continue;
-        } else {
-            (*elems)[*nz+idx].i = (*elems)[i].j;
-            (*elems)[*nz+idx].j = (*elems)[i].i;
-            (*elems)[*nz+idx].val = (*elems)[i].val;
-
-            idx++;
-        }
-    }
-
-    *nz = new_nz;
-}
-
-Elem* read_mm(FILE* f, int* nz, const MM_typecode t){
-    // temporary element array
-    Elem* elems = (Elem*) malloc(*nz*sizeof(Elem));
+Elem** read_mm(FILE* f, int m, int* nz, const MM_typecode t){
+    // array of lists of Elem: 1 per row
+    Elem** elems = (Elem**) calloc(m, sizeof(Elem*));
 
     // scan matrix
-    int diag=0;
-    for (int i=0; i < *nz; i++){
+    int r, c, i;
+    for (i = 0; i < *nz; i++){
+        Elem* elem = (Elem*)malloc(sizeof(Elem));
         if (mm_is_pattern(t)) {
-            fscanf(f, "%d %d\n", &(elems[i].i), &(elems[i].j));
-            elems[i].val = 1.0;
+            fscanf(f, "%d %d\n", &r, &c);
+            elem->val = 1.0;
         } else {
-            fscanf(f, "%d %d %lg\n", &(elems[i].i), &(elems[i].j), &(elems[i].val));
+            fscanf(f, "%d %d %lg\n", &r, &c, &(elem->val));
         }
 
-        if (mm_is_symmetric(t) && elems[i].i==elems[i].j) {
-            diag++;
+        elem->j = --c;
+        elem->next = NULL;
+        insert_in_row(&elems, &elem, --r);
+
+        if (mm_is_symmetric(t) && r != c) {
+            Elem* elem_s = (Elem*)malloc(sizeof(Elem));
+            elem_s->val = elem->val;
+            elem_s->j = r;
+            elem_s->next = NULL;
+            insert_in_row(&elems, &elem_s, c);
+
+            *nz += 1;
         }
-
-        // adjust from 1-based to 0-based
-        elems[i].i--;
-        elems[i].j--;
     }
-
-    if (mm_is_symmetric(t)) {
-        expand_symmetry(&elems, nz, diag);
-    }
-
-    quicksort(&elems, 0, *nz-1);
 
     return elems;
 }
 
 void read_mm_csr(FILE* f, CSR** mat, MM_typecode t){
-    int ret, i, m, n, nz;
+    int ret, i, m, n, nz, elem_count = 0;
+    Elem *curr, *prev;
+    Elem** elems;
 
-    // skip the optional comments and process the matrix size information
+    // process the matrix size information
     ret = mm_read_mtx_crd_size(f, &m, &n, &nz);
-    if (ret != 0) {
-        exit(-1);
-    }
+    if (ret != 0) { exit(-1); }
 
-    Elem* elem = read_mm(f, &nz, t);
+    // read matrix from file
+    elems = read_mm(f, m, &nz, t);
 
     // alloc memory
     *mat = (CSR*) malloc(sizeof(CSR));
@@ -102,73 +74,90 @@ void read_mm_csr(FILE* f, CSR** mat, MM_typecode t){
     error_handler((*mat)->JA);
     error_handler((*mat)->AS);
 
+    // populate CSR format
     (*mat)->M = m;
     (*mat)->N = n;
-    for (i = 0; i < nz; i++){
-        (*mat)->AS[i] = elem[i].val;
-        (*mat)->JA[i] = elem[i].j;
-        (*mat)->IRP[elem[i].i + 1]++;
-    }
-
+    // scan the array of lists: 1 per row
     for (i = 0; i < m; i++){
-        (*mat)->IRP[i + 1] += (*mat)->IRP[i];
-    }
+        curr = elems[i];
 
-    free(elem);
-}
+        // skip empty rows
+        if (curr == NULL) { continue; }
 
-void read_mm_ell(FILE* f, ELL** mat, MM_typecode t){
-    int ret, i, m, n, nz, maxnz, count, r;
+        // update rows pointers
+        (*mat)->IRP[i] = elem_count;
 
-    // skip the optional comments and process the matrix size information
-    ret = mm_read_mtx_crd_size(f, &m, &n, &nz);
-    if (ret != 0) {
-        exit(-1);
-    }
+        // scan elements of i-th row and dealloc memory
+        while (curr != NULL) {
+            (*mat)->AS[elem_count] = curr->val;
+            (*mat)->JA[elem_count] = curr->j;
 
-    Elem* elem = read_mm(f, &nz, t);
-
-    // compute maxnz
-    maxnz = 1;
-    count = 1;
-    r = elem[0].i;
-    for (i = 1; i < nz; i++) {
-        if (r == elem[i].i) {
-            count++;
-        } else {
-            maxnz = count > maxnz ? count : maxnz;
-            count = 0;
+            prev = curr;
+            curr = curr->next;
+            free(prev);
+            elem_count++;
         }
     }
 
-    // alloc memory
-    (*mat)->JA = (int*)malloc((m-1)*(maxnz-1)*sizeof(int));
-    (*mat)->AS = (double*)malloc((m-1)*(maxnz-1)*sizeof(double));
+    free(elems);
+}
+
+void read_mm_ell(FILE* f, ELL** mat, MM_typecode t){
+    int ret, i, m, n, nz, maxnz, count = 0;
+    Elem *curr, *prev;
+    Elem** elems;
+
+    // process the matrix size information
+    ret = mm_read_mtx_crd_size(f, &m, &n, &nz);
+    if (ret != 0) { exit(-1); }
+
+    // read matrix from file
+    elems = read_mm(f, m, &nz, t);
+
+    // retrieve maxnz
+    maxnz = 0;
+    for (i = 0; i < m; i++) {
+        if ((elems[i] != NULL) && (maxnz < elems[i]->nz)) {
+            maxnz = elems[i]->nz;
+        }
+    }
+
+    // alloc memory:
+    // calloc is used to avoid the addition of padding in a loop
+    // 2D arrays are treated as 1D arrays
+    (*mat)->JA = (int*)calloc((m-1)*(maxnz-1), sizeof(int));
+    (*mat)->AS = (double*)calloc((m-1)*(maxnz-1), sizeof(double));
     error_handler((*mat)->JA);
     error_handler((*mat)->AS);
 
+    // populate ELLPACK format
     (*mat)->M = m;
     (*mat)->N = n;
     (*mat)->MAXNZ = maxnz;
 
-    int r2, r1=0, c=0;
-    for (i = 0; i < nz; i++){
-        r2 = elem[i].i-1;
-        if(r1 != r2){
-            while (c != maxnz-1) { // add padding
-                (*mat)->AS[r1*maxnz+c] = 0;
-                (*mat)->JA[r1*maxnz+c] = 0;
-                c++;
-            }
-            c=0;
+    // scan the array of lists: 1 per row
+    for (i = 0; i < m; i++){
+        curr = elems[i];
+
+        // skip empty rows
+        if (curr == NULL) { continue; }
+
+        // scan elements of i-th row and dealloc memory
+        while (curr != NULL) {
+            (*mat)->JA[i*maxnz + count] = curr->j;
+            (*mat)->AS[i*maxnz + count] = curr->val;
+
+            prev = curr;
+            curr = curr->next;
+            free(prev);
+
+            count++;
         }
 
-        (*mat)->AS[r2*maxnz+c] = elem[i].val;
-        (*mat)->JA[r2*maxnz+c] = elem[i].j;
-        c++;
+        count = 0;
     }
 
-    free(elem);
+    free(elems);
 }
 
 void check_mat_type(MM_typecode t) {
