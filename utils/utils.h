@@ -10,16 +10,23 @@
 
 #endif //SCPA_PROJECT_UTILS_H
 
+/**
+ * Elem:
+ *      Node of elements lists used to temporarily store the non-zeros read from files
+ *
+ * @param j column index
+ * @param val value
+ * @param nz (meta) used in the head node to count the total number of non-zeros in the row
+ * @param next pointer to the next element in the row/list
+ * */
 typedef struct elem {
     int j;
     double val;
-    int nz; // metadata used in head node to count number of non-zeros in the row
+    int nz; //
     struct elem* next;
 } Elem;
 
-/**
- * Matrix structures
- * */
+//--------------------------------------------------Matrix structures
 /**
  * CSR
  *
@@ -54,11 +61,9 @@ typedef struct ell {
     double* AS;
 } ELL;
 
-/**
- * Functions signatures
- * */
+//-------------------------------------------------Functions signatures
 void check_mat_type(MM_typecode);
 void error_handler(void *p);
-void read_mm_csr(FILE* f, CSR** mat, MM_typecode t);
-void read_mm_ell(FILE* f, ELL** mat, MM_typecode t);
-void get_mflops(time_t, int);
+CSR* read_mm_csr(FILE* f, MM_typecode t);
+ELL* read_mm_ell(FILE* f, MM_typecode t);
+void get_mflops(time_t, const int*, int);

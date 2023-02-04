@@ -1,11 +1,19 @@
 #include "utils.h"
 
-void insert_in_row(Elem*** arr, Elem** node, int idx) {
-    Elem* head = (*arr)[idx];
+/**
+ * Add an element representing a non-zero read from file to the list
+ * of the respective row
+ *
+ * @param arr array of list heads
+ * @param node pointer to the new element
+ * @param idx index of the row of the element
+ * */
+void insert_in_row(Elem** arr, Elem* node, int idx) {
+    Elem* head = arr[idx];
 
     if (head == NULL) {
-        (*node)->nz = 1;
-        (*arr)[idx] = *node;
+        node->nz = 1;
+        arr[idx] = node;
     } else {
         Elem* prev = NULL;
         Elem* curr = head;
@@ -13,11 +21,19 @@ void insert_in_row(Elem*** arr, Elem** node, int idx) {
             prev = curr;
             curr = curr->next;
         }
-        prev->next = *node;
+        prev->next = node;
         head->nz++;
     }
 }
 
+/**
+ * Read the matrix from .mat files in coordinate format into an array of lists per row
+ *
+ * @param f file descriptor
+ * @param m number of rows
+ * @param nz pointer to the number of non-zeros (to be eventually updated)
+ * @param t matrix type code
+ * */
 Elem** read_mm(FILE* f, int m, int* nz, const MM_typecode t){
     // array of lists of Elem: 1 per row
     Elem** elems = (Elem**) calloc(m, sizeof(Elem*));
@@ -35,14 +51,14 @@ Elem** read_mm(FILE* f, int m, int* nz, const MM_typecode t){
 
         elem->j = --c;
         elem->next = NULL;
-        insert_in_row(&elems, &elem, --r);
+        insert_in_row(elems, elem, --r);
 
         if (mm_is_symmetric(t) && r != c) {
             Elem* elem_s = (Elem*)malloc(sizeof(Elem));
             elem_s->val = elem->val;
             elem_s->j = r;
             elem_s->next = NULL;
-            insert_in_row(&elems, &elem_s, c);
+            insert_in_row(elems, elem_s, c);
 
             *nz += 1;
         }
@@ -51,10 +67,19 @@ Elem** read_mm(FILE* f, int m, int* nz, const MM_typecode t){
     return elems;
 }
 
-void read_mm_csr(FILE* f, CSR** mat, MM_typecode t){
+/**
+ * Read the matrix into a CSR struct representing the matrix in CSR storage format
+ *
+ * @param f file descriptor
+ * @param mat structure to populate
+ * @param nz pointer to the number of non-zeros (to be eventually updated)
+ * @param t matrix type code
+ * */
+CSR* read_mm_csr(FILE* f, MM_typecode t){
     int ret, i, m, n, nz, elem_count = 0;
     Elem *curr, *prev;
     Elem** elems;
+    CSR* mat;
 
     // process the matrix size information
     ret = mm_read_mtx_crd_size(f, &m, &n, &nz);
@@ -64,19 +89,19 @@ void read_mm_csr(FILE* f, CSR** mat, MM_typecode t){
     elems = read_mm(f, m, &nz, t);
 
     // alloc memory
-    *mat = (CSR*) malloc(sizeof(CSR));
-    error_handler(*mat);
+    mat = (CSR*) malloc(sizeof(CSR));
+    error_handler(mat);
 
-    (*mat)->IRP = (int*)malloc(m*sizeof(int));
-    (*mat)->JA = (int*)malloc(nz*sizeof(int));
-    (*mat)->AS = (double*)malloc(nz*sizeof(double));
-    error_handler((*mat)->IRP);
-    error_handler((*mat)->JA);
-    error_handler((*mat)->AS);
+    mat->IRP = (int*)malloc(m*sizeof(int));
+    mat->JA = (int*)malloc(nz*sizeof(int));
+    mat->AS = (double*)malloc(nz*sizeof(double));
+    error_handler(mat->IRP);
+    error_handler(mat->JA);
+    error_handler(mat->AS);
 
     // populate CSR format
-    (*mat)->M = m;
-    (*mat)->N = n;
+    mat->M = m;
+    mat->N = n;
     // scan the array of lists: 1 per row
     for (i = 0; i < m; i++){
         curr = elems[i];
@@ -85,12 +110,12 @@ void read_mm_csr(FILE* f, CSR** mat, MM_typecode t){
         if (curr == NULL) { continue; }
 
         // update rows pointers
-        (*mat)->IRP[i] = elem_count;
+        mat->IRP[i] = elem_count;
 
         // scan elements of i-th row and dealloc memory
         while (curr != NULL) {
-            (*mat)->AS[elem_count] = curr->val;
-            (*mat)->JA[elem_count] = curr->j;
+            mat->AS[elem_count] = curr->val;
+            mat->JA[elem_count] = curr->j;
 
             prev = curr;
             curr = curr->next;
@@ -100,12 +125,15 @@ void read_mm_csr(FILE* f, CSR** mat, MM_typecode t){
     }
 
     free(elems);
+
+    return mat;
 }
 
-void read_mm_ell(FILE* f, ELL** mat, MM_typecode t){
+ELL* read_mm_ell(FILE* f, MM_typecode t){
     int ret, i, m, n, nz, maxnz, count = 0;
     Elem *curr, *prev;
     Elem** elems;
+    ELL* mat;
 
     // process the matrix size information
     ret = mm_read_mtx_crd_size(f, &m, &n, &nz);
@@ -122,18 +150,20 @@ void read_mm_ell(FILE* f, ELL** mat, MM_typecode t){
         }
     }
 
-    // alloc memory:
+    // alloc memory
+    mat = (ELL*) malloc(sizeof(ELL));
+    error_handler(mat);
     // calloc is used to avoid the addition of padding in a loop
     // 2D arrays are treated as 1D arrays
-    (*mat)->JA = (int*)calloc((m-1)*(maxnz-1), sizeof(int));
-    (*mat)->AS = (double*)calloc((m-1)*(maxnz-1), sizeof(double));
-    error_handler((*mat)->JA);
-    error_handler((*mat)->AS);
+    mat->JA = (int*)calloc((m-1)*(maxnz-1), sizeof(int));
+    mat->AS = (double*)calloc((m-1)*(maxnz-1), sizeof(double));
+    error_handler(mat->JA);
+    error_handler(mat->AS);
 
     // populate ELLPACK format
-    (*mat)->M = m;
-    (*mat)->N = n;
-    (*mat)->MAXNZ = maxnz;
+    mat->M = m;
+    mat->N = n;
+    mat->MAXNZ = maxnz;
 
     // scan the array of lists: 1 per row
     for (i = 0; i < m; i++){
@@ -144,8 +174,8 @@ void read_mm_ell(FILE* f, ELL** mat, MM_typecode t){
 
         // scan elements of i-th row and dealloc memory
         while (curr != NULL) {
-            (*mat)->JA[i*maxnz + count] = curr->j;
-            (*mat)->AS[i*maxnz + count] = curr->val;
+            mat->JA[i*maxnz + count] = curr->j;
+            mat->AS[i*maxnz + count] = curr->val;
 
             prev = curr;
             curr = curr->next;
@@ -158,6 +188,8 @@ void read_mm_ell(FILE* f, ELL** mat, MM_typecode t){
     }
 
     free(elems);
+
+    return mat;
 }
 
 void check_mat_type(MM_typecode t) {
@@ -168,12 +200,16 @@ void check_mat_type(MM_typecode t) {
 }
 
 /**
- * Computes the MFLOPS
- *
- * TODO: change accordingly to the application
+ * Computes MFLOPS of the product
  * */
-void get_mflops(time_t v, int dims){
-    int num_ops = 2*dims*dims*dims;
+void get_mflops(time_t v, const int* dims, int size){
+
+    int num_ops = 2;
+
+    for (int i = 0; i < size; i++) {
+        num_ops *= dims[i];
+    }
+
     printf("MFLOPS: %f\n\n", num_ops/((double)v*pow(10,6)));
 }
 
