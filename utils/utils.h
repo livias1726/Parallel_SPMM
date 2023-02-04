@@ -22,7 +22,7 @@
 typedef struct elem {
     int j;
     double val;
-    int nz; //
+    int nz;
     struct elem* next;
 } Elem;
 
@@ -39,6 +39,7 @@ typedef struct elem {
 typedef struct csr {
     int M;
     int N;
+    int NZ;
     int* IRP;
     int* JA;
     double* AS;
@@ -67,3 +68,7 @@ void error_handler(void *p);
 CSR* read_mm_csr(FILE* f, MM_typecode t);
 ELL* read_mm_ell(FILE* f, MM_typecode t);
 void get_mflops(time_t, const int*, int);
+void populate_multivector(double*, int, int);
+void alloc_struct(double**, int, int);
+void print_matrix(double* mat, int rows, int cols, char* msg);
+void print_csr(CSR* csr);

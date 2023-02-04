@@ -3,4 +3,8 @@ project(serial)
 
 set(CMAKE_C_STANDARD 11)
 
+if (AUDIT)
+    add_definitions(-DAUDIT=1)
+endif (AUDIT)
+
 add_executable(serial_mmp serial_mmp.c ../lib/mmio.c ../utils/utils.c)

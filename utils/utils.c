@@ -26,6 +26,12 @@ void insert_in_row(Elem** arr, Elem* node, int idx) {
     }
 }
 
+void initialize_array(Elem** arr, int size) {
+    for (int i = 0; i < size; i++) {
+        arr[i] = NULL;
+    }
+}
+
 /**
  * Read the matrix from .mat files in coordinate format into an array of lists per row
  *
@@ -34,9 +40,9 @@ void insert_in_row(Elem** arr, Elem* node, int idx) {
  * @param nz pointer to the number of non-zeros (to be eventually updated)
  * @param t matrix type code
  * */
-Elem** read_mm(FILE* f, int m, int* nz, const MM_typecode t){
+void read_mm(FILE* f, Elem** elems, int m, int* nz, const MM_typecode t){
     // array of lists of Elem: 1 per row
-    Elem** elems = (Elem**) calloc(m, sizeof(Elem*));
+    initialize_array(elems, m);
 
     // scan matrix
     int r, c, i;
@@ -63,8 +69,6 @@ Elem** read_mm(FILE* f, int m, int* nz, const MM_typecode t){
             *nz += 1;
         }
     }
-
-    return elems;
 }
 
 /**
@@ -78,7 +82,6 @@ Elem** read_mm(FILE* f, int m, int* nz, const MM_typecode t){
 CSR* read_mm_csr(FILE* f, MM_typecode t){
     int ret, i, m, n, nz, elem_count = 0;
     Elem *curr, *prev;
-    Elem** elems;
     CSR* mat;
 
     // process the matrix size information
@@ -86,7 +89,8 @@ CSR* read_mm_csr(FILE* f, MM_typecode t){
     if (ret != 0) { exit(-1); }
 
     // read matrix from file
-    elems = read_mm(f, m, &nz, t);
+    Elem* elems[m];
+    read_mm(f, elems, m, &nz, t);
 
     // alloc memory
     mat = (CSR*) malloc(sizeof(CSR));
@@ -102,6 +106,7 @@ CSR* read_mm_csr(FILE* f, MM_typecode t){
     // populate CSR format
     mat->M = m;
     mat->N = n;
+    mat->NZ = nz;
     // scan the array of lists: 1 per row
     for (i = 0; i < m; i++){
         curr = elems[i];
@@ -124,15 +129,12 @@ CSR* read_mm_csr(FILE* f, MM_typecode t){
         }
     }
 
-    free(elems);
-
     return mat;
 }
 
 ELL* read_mm_ell(FILE* f, MM_typecode t){
     int ret, i, m, n, nz, maxnz, count = 0;
     Elem *curr, *prev;
-    Elem** elems;
     ELL* mat;
 
     // process the matrix size information
@@ -140,7 +142,8 @@ ELL* read_mm_ell(FILE* f, MM_typecode t){
     if (ret != 0) { exit(-1); }
 
     // read matrix from file
-    elems = read_mm(f, m, &nz, t);
+    Elem* elems[m];
+    read_mm(f, elems, m, &nz, t);
 
     // retrieve maxnz
     maxnz = 0;
@@ -187,8 +190,6 @@ ELL* read_mm_ell(FILE* f, MM_typecode t){
         count = 0;
     }
 
-    free(elems);
-
     return mat;
 }
 
@@ -197,6 +198,28 @@ void check_mat_type(MM_typecode t) {
         printf("This application does not support Market Market type: [%s]\n", mm_typecode_to_str(t));
         exit(-1);
     }
+}
+
+/**
+ * Populates x with random doubles
+ *
+ * @param vec receives the multivector
+ * @param rows number of rows of the multivector
+ * @param cols number of cols of the multivector
+ * */
+void populate_multivector(double* vec, int rows, int cols) {
+    int i, j;
+
+    for (i = 0; i < rows; i++){
+        for (j = 0; j < cols; j++){
+            vec[i*cols+j] = ((double)rand()/RAND_MAX);
+        }
+    }
+}
+
+void alloc_struct(double** vec, int rows, int cols) {
+    *vec = (double*) malloc(rows*cols* sizeof(double));
+    error_handler(*vec);
 }
 
 /**
@@ -210,13 +233,46 @@ void get_mflops(time_t v, const int* dims, int size){
         num_ops *= dims[i];
     }
 
-    printf("MFLOPS: %f\n\n", num_ops/((double)v*pow(10,6)));
+    fprintf(stdout, "MFLOPS: %f\n", num_ops/((double)v*pow(10,6)));
 }
-
 
 void error_handler(void *p) {
     if(p == NULL){
         fprintf(stderr, "Malloc failed");
         exit(-1);
     }
+}
+
+//------------------------------------------------Audit
+void print_matrix(double* mat, int rows, int cols, char* msg){
+    fprintf(stdout, "%s", msg);
+    for (int i=0; i < rows; i++) {
+        for (int j=0; j < cols; j++) {
+            fprintf(stdout, "\t%20.19g", mat[i*cols+j]);
+        }
+        fprintf(stdout, "\n");
+    }
+}
+
+void print_csr(CSR* csr){
+    fprintf(stdout, "CSR:\n");
+    fprintf(stdout, "\tM: %d, N: %d, NZ: %d\n", csr->M, csr->N, csr->NZ);
+    fprintf(stdout, "\tRow pointers: [");
+    for (int i=0; i<csr->M-1; i++) {
+        fprintf(stdout, "%d, ", csr->IRP[i]);
+    }
+    fprintf(stdout, "%d]\n", csr->IRP[csr->M-1]);
+
+    fprintf(stdout, "Value (Column):\n");
+    for (int i=0; i<csr->NZ-1; i++) {
+        fprintf(stdout, "\t%20.19g (%d)", csr->AS[i], csr->JA[i]);
+        if (i%3 == 2) {
+            fprintf(stdout, "\n");
+        }
+    }
+    fprintf(stdout, "\t%20.19g (%d)\n", csr->AS[csr->NZ-1], csr->JA[csr->NZ-1]);
+}
+
+void print_ell(ELL* ell){
+
 }
