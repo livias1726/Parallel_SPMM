@@ -7,9 +7,7 @@
  * - X is a multivector with given k columns
  * */
 
-bool ELLPACK = 0;
-
-//-------------------------------------------------------Product
+//---------------------------------------------------------------------------------------------------Product
 
 /**
  * Computes the product with A stored in a CSR format
@@ -20,11 +18,11 @@ bool ELLPACK = 0;
  * @param t1 pointer to first timeval structure
  * @param t2 pointer to second timeval structure
  * */
-void product_csr(CSR mat, const double* x, int k, double* y, struct timeval *t1, struct timeval *t2){
+void product_csr(CSR mat, const double* x, int k, double* y, struct timespec *t1, struct timespec *t2){
     int i, j, z, limit, rows = mat.M;
     double t;
 
-    gettimeofday(t1, NULL);
+    clock_gettime(CLOCK_MONOTONIC, t1);
     for (z = 0; z < k; z++) {
         for (i = 0; i < rows; i++) {
             t = 0.0;
@@ -36,7 +34,7 @@ void product_csr(CSR mat, const double* x, int k, double* y, struct timeval *t1,
             y[i*k+z] = t;
         }
     }
-    gettimeofday(t2, NULL);
+    clock_gettime(CLOCK_MONOTONIC, t2);
 }
 
 /**
@@ -48,29 +46,25 @@ void product_csr(CSR mat, const double* x, int k, double* y, struct timeval *t1,
  * @param t1 pointer to first timeval structure
  * @param t2 pointer to second timeval structure
  * */
-void product_ell(ELL mat, const double* x, int k, double* y, struct timeval *t1, struct timeval *t2){
-    int i, j, z, m = mat.M, maxnz = mat.MAXNZ;
+void product_ell(ELL mat, const double* x, int k, double* y, struct timespec *t1, struct timespec *t2){
+    int i, j, z, maxnz = mat.MAXNZ;
     double t;
 
-    y = (double*) malloc(m*k*sizeof(double));
-    error_handler(y);
-
-    gettimeofday(t1, NULL);
+    clock_gettime(CLOCK_MONOTONIC, t1);
     for (z = 0; z < k; z++) {
-        for (i = 0; i < m; i++) {
+        for (i = 0; i < mat.M; i++) {
             t = 0.0;
 
             for (j = 0; j < maxnz; j++) {
                 t += mat.AS[i*maxnz+j]*x[mat.JA[i*maxnz+j]*k+z];
             }
-
             y[i*k+z] = t;
         }
     }
-    gettimeofday(t2, NULL);
+    clock_gettime(CLOCK_MONOTONIC, t2);
 }
 
-//-----------------------------------------------------Main
+//-----------------------------------------------------------------------------------------Main
 int main(int argc, char** argv) {
 
     MM_typecode t;
@@ -78,17 +72,22 @@ int main(int argc, char** argv) {
     CSR* csr;
     ELL* ell;
     double *x, *y;
-    int k, m, n;
-    struct timeval t1, t2;
+    int k, m, n, nz;
+    struct timespec t1, t2;
+    bool ellpack;
 
     // check the correct use of the program
     if (argc < 4){
-        fprintf(stderr, "Usage: %s [mm-filename] [k] [storage-format]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [mm-filename] [storage-format] [k value] \n", argv[0]);
         exit(-1);
     }
 
     // create file path
-    char path[] = "C:\\Users\\oem\\OneDrive - Universita' degli Studi di Roma Tor Vergata\\Corsi\\Attivi\\SCPA\\Progetto\\SCPA_Project\\resources\\";
+#ifdef PERFORMANCE
+    char path[] = "resources/files/";
+#else
+    char path[] = "../resources/files/";
+#endif
     strcat(path, argv[1]);
 
     //check the correct opening of the matrix file
@@ -99,8 +98,8 @@ int main(int argc, char** argv) {
     }
 
     // get k value and desired storage format
-    k = strtol(argv[2], NULL, 10);
-    ELLPACK = (strcmp(argv[2], "ellpack") == 0) ? true : false;
+    ellpack = (strcmp(argv[2], "ellpack") == 0) ? true : false;
+    k = strtol(argv[3], NULL, 10);
 
     // process the first line of file and identify the matrix type
     if (mm_read_banner(f, &t) != 0){
@@ -112,17 +111,19 @@ int main(int argc, char** argv) {
     check_mat_type(t);
 
     // convert to wanted storage format
-    if (ELLPACK) {
+    if (ellpack) {
         ell = read_mm_ell(f, t);
         m = ell->M;
         n = ell->N;
+        nz = ell->NZ;
 #ifdef AUDIT
-        //print_ell(ell);
+        print_ell(ell);
 #endif
     } else {
         csr = read_mm_csr(f, t);
         m = csr->M;
         n = csr->N;
+        nz = csr->NZ;
 #ifdef AUDIT
         print_csr(csr);
 #endif
@@ -141,19 +142,24 @@ int main(int argc, char** argv) {
 #endif
 
     // compute the product
-    if (ELLPACK) {
+    if (ellpack) {
         product_ell(*ell, x, k, y, &t1, &t2);
+        free(ell);
     } else {
         product_csr(*csr, x, k, y, &t1, &t2);
+        free(csr);
     }
+
+    free(x);
 
 #ifdef AUDIT
     // print results
     print_matrix(y, m, k, "\nResult:\n");
 #endif
 
-    int dims[3] = {m, n, k};
-    get_mflops(t2.tv_sec-t1.tv_sec, dims, 3);
+#ifdef PERFORMANCE
+    fprintf(stdout, "%lld.%.9ld %lld.%.9ld %d", t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec, nz);
+#endif
 
     return 0;
 }

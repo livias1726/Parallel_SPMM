@@ -32,6 +32,7 @@ typedef struct elem {
  *
  * @param M number of rows
  * @param N number of cols
+ * @param NZ number of non-zeros (necessary for mflops computation)
  * @param IRP array of row pointers: indexes of the values in AS that start a new row
  * @param JA array of non-zeros col indices
  * @param AS array of non-zero values
@@ -50,6 +51,7 @@ typedef struct csr {
  *
  * @param M number of rows
  * @param N number of cols
+ * @param NZ number of non-zeros (necessary for mflops computation)
  * @param MAXNZ max number of non-zeros in a row
  * @param JA 2D array of non-zeros col indices
  * @param AS 2D array of non-zero values
@@ -57,18 +59,21 @@ typedef struct csr {
 typedef struct ell {
     int M;
     int N;
+    int NZ;
     int MAXNZ;
     int* JA;
     double* AS;
 } ELL;
 
 //-------------------------------------------------Functions signatures
+CSR* read_mm_csr(FILE*, MM_typecode);
+ELL* read_mm_ell(FILE*, MM_typecode);
+
 void check_mat_type(MM_typecode);
-void error_handler(void *p);
-CSR* read_mm_csr(FILE* f, MM_typecode t);
-ELL* read_mm_ell(FILE* f, MM_typecode t);
-void get_mflops(time_t, const int*, int);
+void malloc_handler(int, void**, int);
 void populate_multivector(double*, int, int);
 void alloc_struct(double**, int, int);
-void print_matrix(double* mat, int rows, int cols, char* msg);
-void print_csr(CSR* csr);
+
+void print_matrix(double*, int, int, char*);
+void print_csr(CSR*);
+void print_ell(ELL*);

@@ -1,5 +1,6 @@
 #include "utils.h"
 
+//---------------------------------------------------------------------------------------Storage
 /**
  * Add an element representing a non-zero read from file to the list
  * of the respective row
@@ -26,12 +27,6 @@ void insert_in_row(Elem** arr, Elem* node, int idx) {
     }
 }
 
-void initialize_array(Elem** arr, int size) {
-    for (int i = 0; i < size; i++) {
-        arr[i] = NULL;
-    }
-}
-
 /**
  * Read the matrix from .mat files in coordinate format into an array of lists per row
  *
@@ -41,11 +36,12 @@ void initialize_array(Elem** arr, int size) {
  * @param t matrix type code
  * */
 void read_mm(FILE* f, Elem** elems, int m, int* nz, const MM_typecode t){
+    int r, c, i;
+
     // array of lists of Elem: 1 per row
-    initialize_array(elems, m);
+    for (i = 0; i < m; i++) { elems[i] = NULL; }
 
     // scan matrix
-    int r, c, i;
     for (i = 0; i < *nz; i++){
         Elem* elem = (Elem*)malloc(sizeof(Elem));
         if (mm_is_pattern(t)) {
@@ -75,33 +71,28 @@ void read_mm(FILE* f, Elem** elems, int m, int* nz, const MM_typecode t){
  * Read the matrix into a CSR struct representing the matrix in CSR storage format
  *
  * @param f file descriptor
- * @param mat structure to populate
- * @param nz pointer to the number of non-zeros (to be eventually updated)
  * @param t matrix type code
  * */
 CSR* read_mm_csr(FILE* f, MM_typecode t){
-    int ret, i, m, n, nz, elem_count = 0;
+    int i, m, n, nz, elem_count = 0;
     Elem *curr, *prev;
     CSR* mat;
 
     // process the matrix size information
-    ret = mm_read_mtx_crd_size(f, &m, &n, &nz);
-    if (ret != 0) { exit(-1); }
+    if (mm_read_mtx_crd_size(f, &m, &n, &nz) != 0) { exit(-1); }
 
     // read matrix from file
-    Elem* elems[m];
+    Elem** elems = (Elem**) malloc(m* sizeof(Elem*));
     read_mm(f, elems, m, &nz, t);
 
     // alloc memory
     mat = (CSR*) malloc(sizeof(CSR));
-    error_handler(mat);
+    malloc_handler(1, (void* []) {mat}, 90);
 
     mat->IRP = (int*)malloc(m*sizeof(int));
     mat->JA = (int*)malloc(nz*sizeof(int));
     mat->AS = (double*)malloc(nz*sizeof(double));
-    error_handler(mat->IRP);
-    error_handler(mat->JA);
-    error_handler(mat->AS);
+    malloc_handler(3, (void* []) {mat->IRP, mat->JA, mat->AS}, 95);
 
     // populate CSR format
     mat->M = m;
@@ -129,20 +120,26 @@ CSR* read_mm_csr(FILE* f, MM_typecode t){
         }
     }
 
+    free(elems);
     return mat;
 }
 
+/**
+ * Read the matrix into a ELL struct representing the matrix in ELLPACK storage format
+ *
+ * @param f file descriptor
+ * @param t matrix type code
+ * */
 ELL* read_mm_ell(FILE* f, MM_typecode t){
-    int ret, i, m, n, nz, maxnz, count = 0;
+    int i, m, n, nz, maxnz, count = 0;
     Elem *curr, *prev;
     ELL* mat;
 
     // process the matrix size information
-    ret = mm_read_mtx_crd_size(f, &m, &n, &nz);
-    if (ret != 0) { exit(-1); }
+    if (mm_read_mtx_crd_size(f, &m, &n, &nz) != 0) { exit(-1); }
 
     // read matrix from file
-    Elem* elems[m];
+    Elem** elems = (Elem**) malloc(m* sizeof(Elem*));
     read_mm(f, elems, m, &nz, t);
 
     // retrieve maxnz
@@ -155,29 +152,26 @@ ELL* read_mm_ell(FILE* f, MM_typecode t){
 
     // alloc memory
     mat = (ELL*) malloc(sizeof(ELL));
-    error_handler(mat);
+    malloc_handler(1, (void* []) {mat}, 155);
     // calloc is used to avoid the addition of padding in a loop
     // 2D arrays are treated as 1D arrays
-    mat->JA = (int*)calloc((m-1)*(maxnz-1), sizeof(int));
-    mat->AS = (double*)calloc((m-1)*(maxnz-1), sizeof(double));
-    error_handler(mat->JA);
-    error_handler(mat->AS);
+    mat->JA = calloc(m*maxnz, sizeof(int));
+    mat->AS = (double*)calloc(m*maxnz, sizeof(double));
+    malloc_handler(2, (void* []) {mat->JA, mat->AS}, 160);
 
     // populate ELLPACK format
     mat->M = m;
     mat->N = n;
+    mat->NZ = nz;
     mat->MAXNZ = maxnz;
 
     // scan the array of lists: 1 per row
     for (i = 0; i < m; i++){
         curr = elems[i];
 
-        // skip empty rows
-        if (curr == NULL) { continue; }
-
         // scan elements of i-th row and dealloc memory
         while (curr != NULL) {
-            mat->JA[i*maxnz + count] = curr->j;
+            mat->JA[i*maxnz + count] = curr->j; //TODO: fix segfault for bigger matrices
             mat->AS[i*maxnz + count] = curr->val;
 
             prev = curr;
@@ -190,9 +184,11 @@ ELL* read_mm_ell(FILE* f, MM_typecode t){
         count = 0;
     }
 
+    free(elems);
     return mat;
 }
 
+//------------------------------------------------------------------------------------------Others
 void check_mat_type(MM_typecode t) {
     if ((!mm_is_real(t) || !mm_is_pattern(t)) && !mm_is_sparse(t)) {
         printf("This application does not support Market Market type: [%s]\n", mm_typecode_to_str(t));
@@ -200,18 +196,9 @@ void check_mat_type(MM_typecode t) {
     }
 }
 
-/**
- * Populates x with random doubles
- *
- * @param vec receives the multivector
- * @param rows number of rows of the multivector
- * @param cols number of cols of the multivector
- * */
 void populate_multivector(double* vec, int rows, int cols) {
-    int i, j;
-
-    for (i = 0; i < rows; i++){
-        for (j = 0; j < cols; j++){
+    for (int i = 0; i < rows; i++){
+        for (int j = 0; j < cols; j++){
             vec[i*cols+j] = ((double)rand()/RAND_MAX);
         }
     }
@@ -219,31 +206,19 @@ void populate_multivector(double* vec, int rows, int cols) {
 
 void alloc_struct(double** vec, int rows, int cols) {
     *vec = (double*) malloc(rows*cols* sizeof(double));
-    error_handler(*vec);
+    malloc_handler(1, (void*[]){*vec}, 209);
 }
 
-/**
- * Computes MFLOPS of the product
- * */
-void get_mflops(time_t v, const int* dims, int size){
-
-    int num_ops = 2;
-
-    for (int i = 0; i < size; i++) {
-        num_ops *= dims[i];
-    }
-
-    fprintf(stdout, "MFLOPS: %f\n", num_ops/((double)v*pow(10,6)));
-}
-
-void error_handler(void *p) {
-    if(p == NULL){
-        fprintf(stderr, "Malloc failed");
-        exit(-1);
+void malloc_handler(int size, void **p, int line) {
+    for(int i=0; i<size; i++){
+        if(p[i] == NULL){
+            fprintf(stderr, "Malloc failed on line %d\n", line);
+            exit(-1);
+        }
     }
 }
 
-//------------------------------------------------Audit
+//---------------------------------------------------------------------------------------Audit
 void print_matrix(double* mat, int rows, int cols, char* msg){
     fprintf(stdout, "%s", msg);
     for (int i=0; i < rows; i++) {
@@ -273,6 +248,14 @@ void print_csr(CSR* csr){
     fprintf(stdout, "\t%20.19g (%d)\n", csr->AS[csr->NZ-1], csr->JA[csr->NZ-1]);
 }
 
-void print_ell(ELL* ell){
-
+void print_ell(ELL* ell) {
+    fprintf(stdout, "ELL:\n");
+    fprintf(stdout, "\tM: %d, N: %d, MAXNZ: %d\n", ell->M, ell->N, ell->MAXNZ);
+    fprintf(stdout, "Value (Column):\n\t");
+    for (int i = 0; i < ell->M; i++) {
+        for (int j = 0; j < ell->MAXNZ; j++) {
+            fprintf(stdout, "%20.19g (%d) ", ell->AS[i*ell->MAXNZ + j], ell->JA[i*ell->MAXNZ + j]);
+        }
+        fprintf(stdout, "\n\t");
+    }
 }
