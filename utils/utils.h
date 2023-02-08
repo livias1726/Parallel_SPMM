@@ -1,14 +1,20 @@
-#include <sys/time.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <stdbool.h>
+#include <string.h>
+#include <errno.h>
 #include "../lib/mmio.h"
 
 #ifndef SCPA_PROJECT_UTILS_H
 #define SCPA_PROJECT_UTILS_H
 
 #endif //SCPA_PROJECT_UTILS_H
+
+#define PATH_MAX 512
+#define NAME_MAX 256
+#define IO_MAX 1024
 
 /**
  * Elem:
@@ -66,8 +72,9 @@ typedef struct ell {
 } ELL;
 
 //-------------------------------------------------Functions signatures
-CSR* read_mm_csr(FILE*, MM_typecode);
-ELL* read_mm_ell(FILE*, MM_typecode);
+Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t);
+CSR* alloc_csr(int m, int n, int nz);
+ELL* alloc_ell(Elem** elems, int m, int n, int nz, int* maxnz);
 
 void check_mat_type(MM_typecode);
 void malloc_handler(int, void**, int);

@@ -1,26 +1,30 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
+#include <unistd.h>
+#include "utils/utils.h"
 
 #define NUM_RUNS 5
-#define NAME_MAX 20
 #define NUM_STORAGE 2
 #define NUM_K 7
-#define PROGRAM "cmake-build-debug\\serial\\serial_mmp "
-#define PATH "resources/files/"
+#define PROGRAM "cmake-build-debug/openmp/omp_spmv " //"cmake-build-debug/serial/spmv "
+#define PATH "resources\\files\\"
 
 #define get_gflops(t, k, nz) ((2*k*nz)/t)
 
 void tokenize_output (char* output, double* start, double* end, int* nz) {
     char* tok = strtok(output, " ");
-    *start = strtod(tok, NULL);
+    char* tokens[3];
+    int count = -1;
 
-    tok = strtok(NULL, " ");
-    *end = strtod(tok, NULL);
+    while (tok != NULL && count < 3) {
+        count++;
+        tokens[count] = tok;
+        tok = strtok(NULL, " ");
+    }
 
-    tok = strtok(NULL, " ");
-    *nz = strtol(tok, NULL, 10);
+    if (count == 2) {
+        *start = strtod(tokens[0], NULL);
+        *end = strtod(tokens[1], NULL);
+        *nz = (int)strtol(tokens[2], NULL, 10);
+    }
 }
 
 double elapsed_nanoseconds (double start, double end) {
@@ -47,19 +51,18 @@ int main(){
     FILE *mat_file, *pipe, *out_file;
     int i, j, z, k, nz;
     double start, end, time, gflops = 0;
-    char name[NAME_MAX], input[PATH_MAX], output[PATH_MAX], filepath[strlen(PATH) + NAME_MAX];
-    char *path_idx, *name_idx, *storage_idx, *k_idx,
-            *ks[NUM_K] = {" 3", " 4", " 8", " 12", " 16", " 32", " 64"},
-            *storage[NUM_STORAGE] = {" csr", " ellpack"};
+    char name[NAME_MAX], input[IO_MAX], output[IO_MAX], filepath[strlen(PATH) + NAME_MAX];
+    char *ks[NUM_K] = {" 3", " 4", " 8", " 12", " 16", " 32", " 64"},
+         *storage[NUM_STORAGE] = {" csr", " ellpack"};
+    unsigned ptr1 = strlen(PROGRAM), ptr2, ptr3;
 
     // get list of matrix names
     if ((mat_file = fopen("matrices.txt", "r")) == NULL) {
-        fprintf(stderr, "Cannot open matrices file\n");
+        fprintf(stderr, "Cannot open matrices file (Error: %d)\n", errno);
         exit(-1);
     }
     strcpy(filepath, PATH); // initialize first half of filepath
     strcpy(input, PROGRAM); // add program name to input
-    path_idx = filepath + strlen(PATH);
 
     //create csv for results
     if ((out_file = fopen("gflops.csv", "w+")) == NULL) {
@@ -71,23 +74,26 @@ int main(){
     // run
     while (fgets(name, NAME_MAX, mat_file)) {
         // add matrix name to input
-        name_idx = input + strlen(PROGRAM);
         name[strlen(name)-1] = '\0';
-        strcpy(name_idx, name);
+        if (strcmp(name, "") == 0) {
+            continue;
+        }
+        strcpy(&input[ptr1], name);
         // build path
-        strcpy(path_idx, name);
+        strcpy(&filepath[strlen(PATH)], name);
+        ptr2 = ptr1 + strlen(name); // index of the copying point
 
-        storage_idx = name_idx + strlen(name); // index of the copying point
         for (i=0; i<NUM_STORAGE; i++) {
             // add storage format to input
-            strcpy(storage_idx, storage[i]);
+            strcpy(&input[ptr2], storage[i]);
+            ptr3 = ptr2 + strlen(storage[i]); // index of the copying point
 
-            k_idx = storage_idx + strlen(storage[i]); // index of the copying point
             for (j=0; j<NUM_K; j++) {
                 // add k value to input
-                strcpy(k_idx, ks[j]);
+                strcpy(&input[ptr3], ks[j]);
 
                 for (z=0; z<NUM_RUNS; z++) {
+                    printf("Execution %d: [%s]\n", z, input);
                     // launch program
                     pipe = popen(input, "r");
                     if (pipe == NULL){
@@ -105,7 +111,7 @@ int main(){
 
                     tokenize_output(output, &start, &end, &nz);
                     time = elapsed_nanoseconds(start, end);
-                    k = strtol(ks[j], NULL, 10);
+                    k = (int)strtol(ks[j], NULL, 10);
                     gflops += get_gflops(time, k, nz);
                 }
 
@@ -113,7 +119,9 @@ int main(){
                 gflops = gflops / NUM_RUNS;
 
                 // save on csv
-                fprintf(out_file, "%s, %s, %d, %f\n", name, storage[i], k, gflops);
+                fprintf(out_file, "%s,%s,%d,%f\n", name, storage[i], k, gflops);
+
+                sleep(1);
             }
 
             gflops = 0;

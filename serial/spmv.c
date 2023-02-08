@@ -1,11 +1,90 @@
 #include "../utils/utils.h"
-#include <string.h>
 
 /**
  * serial_mmp performs a SERIAL matrix-multivector multiplication Y <- AX where
  * - A is a sparse matrix
  * - X is a multivector with given k columns
  * */
+
+//---------------------------------------------------------------------------------------------------Pre-processing
+/**
+ * Read the matrix into a CSR struct representing the matrix in CSR storage format
+ *
+ * @param f file descriptor
+ * @param t matrix type code
+ * */
+CSR* read_mm_csr(FILE* f, MM_typecode t){
+    int i, m, n, nz, elem_count = 0;
+    Elem *curr, *prev;
+
+    // read matrix from file
+    Elem** elems = read_mm(f, &m, &n, &nz, t);
+    // alloc memory
+    CSR* mat = alloc_csr(m, n, nz);
+
+    // scan the array of lists: 1 per row
+    for (i = 0; i < m; i++){
+        curr = elems[i];
+
+        // skip empty rows
+        if (curr == NULL) { continue; }
+
+        // update rows pointers
+        mat->IRP[i] = elem_count;
+
+        // scan elements of i-th row and dealloc memory
+        while (curr != NULL) {
+            mat->AS[elem_count] = curr->val;
+            mat->JA[elem_count] = curr->j;
+
+            prev = curr;
+            curr = curr->next;
+            free(prev);
+            elem_count++;
+        }
+    }
+
+    free(elems);
+    return mat;
+}
+
+/**
+ * Read the matrix into a ELL struct representing the matrix in ELLPACK storage format
+ *
+ * @param f file descriptor
+ * @param t matrix type code
+ * */
+ELL* read_mm_ell(FILE* f, MM_typecode t){
+    int i, m, n, nz, maxnz, count = 0;
+    Elem *curr, *prev;
+
+    // read matrix from file
+    Elem** elems = read_mm(f, &m, &n, &nz, t);
+    // alloc memory
+    ELL* mat = alloc_ell(elems, m, n, nz, &maxnz);
+
+    // scan the array of lists: 1 per row
+    for (i = 0; i < m; i++){
+        curr = elems[i];
+
+        // scan elements of i-th row and dealloc memory
+        while (curr != NULL) {
+            mat->JA[i*maxnz + count] = curr->j;
+            mat->AS[i*maxnz + count] = curr->val;
+
+            prev = curr;
+            curr = curr->next;
+            free(prev);
+
+            count++;
+        }
+
+        count = 0;
+    }
+
+    free(elems);
+    return mat;
+}
 
 //---------------------------------------------------------------------------------------------------Product
 
@@ -69,8 +148,8 @@ int main(int argc, char** argv) {
 
     MM_typecode t;
     FILE *f;
-    CSR* csr;
-    ELL* ell;
+    CSR* csr = NULL;
+    ELL* ell = NULL;
     double *x, *y;
     int k, m, n, nz;
     struct timespec t1, t2;
@@ -84,9 +163,9 @@ int main(int argc, char** argv) {
 
     // create file path
 #ifdef PERFORMANCE
-    char path[] = "resources/files/";
+    char path[PATH_MAX] = "resources/files/";
 #else
-    char path[] = "../resources/files/";
+    char path[PATH_MAX] = "../resources/files/";
 #endif
     strcat(path, argv[1]);
 
@@ -99,7 +178,7 @@ int main(int argc, char** argv) {
 
     // get k value and desired storage format
     ellpack = (strcmp(argv[2], "ellpack") == 0) ? true : false;
-    k = strtol(argv[3], NULL, 10);
+    k = (int)strtol(argv[3], NULL, 10);
 
     // process the first line of file and identify the matrix type
     if (mm_read_banner(f, &t) != 0){
@@ -155,11 +234,13 @@ int main(int argc, char** argv) {
 #ifdef AUDIT
     // print results
     print_matrix(y, m, k, "\nResult:\n");
+    fprintf(stdout, "\n%ld.%.9ld %ld.%.9ld\n", t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
 #endif
 
 #ifdef PERFORMANCE
-    fprintf(stdout, "%lld.%.9ld %lld.%.9ld %d", t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec, nz);
+    fprintf(stdout, "%ld.%.9ld %ld.%.9ld %d", t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec, nz);
 #endif
+
 
     return 0;
 }

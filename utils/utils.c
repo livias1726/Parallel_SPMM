@@ -1,5 +1,8 @@
 #include "utils.h"
 
+//---------------------------------------------------------------------------------------Initialization
+//TODO: see if first half of main can be merged for all modules
+
 //---------------------------------------------------------------------------------------Storage
 /**
  * Add an element representing a non-zero read from file to the list
@@ -35,14 +38,20 @@ void insert_in_row(Elem** arr, Elem* node, int idx) {
  * @param nz pointer to the number of non-zeros (to be eventually updated)
  * @param t matrix type code
  * */
-void read_mm(FILE* f, Elem** elems, int m, int* nz, const MM_typecode t){
-    int r, c, i;
+Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){
+    int r, c, i, onz;
+
+    // process the matrix size information
+    if (mm_read_mtx_crd_size(f, m, n, nz) != 0) { exit(-1); }
+    onz = *nz;
 
     // array of lists of Elem: 1 per row
-    for (i = 0; i < m; i++) { elems[i] = NULL; }
+    Elem** elems = (Elem**) malloc((*m)* sizeof(Elem*));
+    malloc_handler(1, (void* []) {elems}, 48);
+    for (i = 0; i < *m; i++) { elems[i] = NULL; }
 
     // scan matrix
-    for (i = 0; i < *nz; i++){
+    for (i = 0; i < onz; i++){
         Elem* elem = (Elem*)malloc(sizeof(Elem));
         if (mm_is_pattern(t)) {
             fscanf(f, "%d %d\n", &r, &c);
@@ -65,28 +74,13 @@ void read_mm(FILE* f, Elem** elems, int m, int* nz, const MM_typecode t){
             *nz += 1;
         }
     }
+
+    return elems;
 }
 
-/**
- * Read the matrix into a CSR struct representing the matrix in CSR storage format
- *
- * @param f file descriptor
- * @param t matrix type code
- * */
-CSR* read_mm_csr(FILE* f, MM_typecode t){
-    int i, m, n, nz, elem_count = 0;
-    Elem *curr, *prev;
-    CSR* mat;
-
-    // process the matrix size information
-    if (mm_read_mtx_crd_size(f, &m, &n, &nz) != 0) { exit(-1); }
-
-    // read matrix from file
-    Elem** elems = (Elem**) malloc(m* sizeof(Elem*));
-    read_mm(f, elems, m, &nz, t);
-
+CSR* alloc_csr(int m, int n, int nz){
     // alloc memory
-    mat = (CSR*) malloc(sizeof(CSR));
+    CSR* mat = (CSR*) malloc(sizeof(CSR));
     malloc_handler(1, (void* []) {mat}, 90);
 
     mat->IRP = (int*)malloc(m*sizeof(int));
@@ -98,6 +92,56 @@ CSR* read_mm_csr(FILE* f, MM_typecode t){
     mat->M = m;
     mat->N = n;
     mat->NZ = nz;
+
+    return mat;
+}
+
+ELL* alloc_ell(Elem** elems, int m, int n, int nz, int* maxnz){
+    // retrieve maxnz
+    *maxnz = 0;
+    for (int i = 0; i < m; i++) {
+        if ((elems[i] != NULL) && (*maxnz < elems[i]->nz)) {
+            *maxnz = elems[i]->nz;
+        }
+    }
+
+    // alloc memory
+    ELL* mat = (ELL*) malloc(sizeof(ELL));
+    malloc_handler(1, (void* []) {mat}, 155);
+    // calloc is used to avoid the addition of padding in a loop
+    // 2D arrays are treated as 1D arrays
+    mat->JA = calloc(m*(*maxnz), sizeof(int));
+    mat->AS = (double*)calloc(m*(*maxnz), sizeof(double));
+    malloc_handler(2, (void* []) {mat->JA, mat->AS}, 160);
+
+    // populate ELLPACK format
+    mat->M = m;
+    mat->N = n;
+    mat->NZ = nz;
+    mat->MAXNZ = *maxnz;
+
+    return mat;
+}
+
+//-------------------------------------------------------------------------------------------Serial
+
+
+//-----------------------------------------------------------------------------------------OMP
+/**
+ * Read the matrix into a CSR struct representing the matrix in CSR storage format
+ *
+ * @param f file descriptor
+ * @param t matrix type code
+ * */
+CSR* omp_read_mm_csr(FILE* f, MM_typecode t){
+    int i, m, n, nz, elem_count = 0;
+    Elem *curr, *prev;
+
+    // read matrix from file
+    Elem** elems = read_mm(f, &m, &n, &nz, t);
+    // alloc memory
+    CSR* mat = alloc_csr(m, n, nz);
+
     // scan the array of lists: 1 per row
     for (i = 0; i < m; i++){
         curr = elems[i];
@@ -130,40 +174,14 @@ CSR* read_mm_csr(FILE* f, MM_typecode t){
  * @param f file descriptor
  * @param t matrix type code
  * */
-ELL* read_mm_ell(FILE* f, MM_typecode t){
+ELL* omp_read_mm_ell(FILE* f, MM_typecode t){
     int i, m, n, nz, maxnz, count = 0;
     Elem *curr, *prev;
-    ELL* mat;
-
-    // process the matrix size information
-    if (mm_read_mtx_crd_size(f, &m, &n, &nz) != 0) { exit(-1); }
 
     // read matrix from file
-    Elem** elems = (Elem**) malloc(m* sizeof(Elem*));
-    read_mm(f, elems, m, &nz, t);
-
-    // retrieve maxnz
-    maxnz = 0;
-    for (i = 0; i < m; i++) {
-        if ((elems[i] != NULL) && (maxnz < elems[i]->nz)) {
-            maxnz = elems[i]->nz;
-        }
-    }
-
+    Elem** elems = read_mm(f, &m, &n, &nz, t);
     // alloc memory
-    mat = (ELL*) malloc(sizeof(ELL));
-    malloc_handler(1, (void* []) {mat}, 155);
-    // calloc is used to avoid the addition of padding in a loop
-    // 2D arrays are treated as 1D arrays
-    mat->JA = calloc(m*maxnz, sizeof(int));
-    mat->AS = (double*)calloc(m*maxnz, sizeof(double));
-    malloc_handler(2, (void* []) {mat->JA, mat->AS}, 160);
-
-    // populate ELLPACK format
-    mat->M = m;
-    mat->N = n;
-    mat->NZ = nz;
-    mat->MAXNZ = maxnz;
+    ELL* mat = alloc_ell(elems, m, n, nz, &maxnz);
 
     // scan the array of lists: 1 per row
     for (i = 0; i < m; i++){
@@ -171,7 +189,7 @@ ELL* read_mm_ell(FILE* f, MM_typecode t){
 
         // scan elements of i-th row and dealloc memory
         while (curr != NULL) {
-            mat->JA[i*maxnz + count] = curr->j; //TODO: fix segfault for bigger matrices
+            mat->JA[i*maxnz + count] = curr->j;
             mat->AS[i*maxnz + count] = curr->val;
 
             prev = curr;
