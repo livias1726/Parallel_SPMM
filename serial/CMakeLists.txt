@@ -7,4 +7,4 @@ if (AUDIT)
     add_definitions(-DAUDIT=1)
 endif (AUDIT)
 
-add_executable(spmv spmv.c ../lib/mmio.c ../utils/utils.c)
+add_executable(spmm s_spmm.c ../lib/mmio.c ../utils/utils.c)

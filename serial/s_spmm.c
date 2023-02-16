@@ -127,7 +127,7 @@ void product_csr(CSR mat, const double* x, int k, double* y, struct timespec *t1
  * */
 void product_ell(ELL mat, const double* x, int k, double* y, struct timespec *t1, struct timespec *t2){
     int i, j, z, maxnz = mat.MAXNZ;
-    double t;
+    double t, val;
 
     clock_gettime(CLOCK_MONOTONIC, t1);
     for (z = 0; z < k; z++) {
@@ -135,8 +135,13 @@ void product_ell(ELL mat, const double* x, int k, double* y, struct timespec *t1
             t = 0.0;
 
             for (j = 0; j < maxnz; j++) {
-                t += mat.AS[i*maxnz+j]*x[mat.JA[i*maxnz+j]*k+z];
+                val = mat.AS[i*maxnz+j];
+                if (val == 0) { // if padding is reached break loop
+                    break;
+                }
+                t += val*x[mat.JA[i*maxnz+j]*k+z];
             }
+
             y[i*k+z] = t;
         }
     }
@@ -234,13 +239,12 @@ int main(int argc, char** argv) {
 #ifdef AUDIT
     // print results
     print_matrix(y, m, k, "\nResult:\n");
-    fprintf(stdout, "\n%ld.%.9ld %ld.%.9ld\n", t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
 #endif
 
 #ifdef PERFORMANCE
     fprintf(stdout, "%ld.%.9ld %ld.%.9ld %d", t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec, nz);
 #endif
 
-
+    //fprintf(stdout, "\n%ld.%.9ld %ld.%.9ld\n", t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
     return 0;
 }

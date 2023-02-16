@@ -15,4 +15,4 @@ if (AUDIT)
     add_definitions(-DAUDIT=1)
 endif (AUDIT)
 
-add_executable(omp_spmv omp_spmv.c ../lib/mmio.c ../utils/utils.c)
+add_executable(omp_spmm omp_spmm.c ../lib/mmio.c ../utils/utils.c)

@@ -1,10 +1,8 @@
 #include <omp.h>
 #include "../utils/utils.h"
 
-//TODO: pass as argument - tests from 1 to max
-
 /**
- * omp_spmv performs an OpenMP multithreaded version of a matrix-multivector multiplication Y <- AX where
+ * omp_spmm performs an OpenMP multithreaded version of a matrix-multivector multiplication Y <- AX where
  * - A is a sparse matrix
  * - X is a multivector with given k columns
  * */
@@ -113,7 +111,6 @@ ELL* read_mm_ell(FILE* f, MM_typecode t){
 }
 
 //---------------------------------------------------------------------------------------------------Product
-
 /**
  * Computes the product with A stored in a CSR format
  *
@@ -124,24 +121,19 @@ ELL* read_mm_ell(FILE* f, MM_typecode t){
  * @param t2 pointer to second timeval structure
  * */
 void product_csr(CSR mat, const double* x, int k, double* y, struct timespec *t1, struct timespec *t2){
-    int i, j, z, limit, rows = mat.M;
-    double t;
+    int i, rows = mat.M;
 
     clock_gettime(CLOCK_MONOTONIC, t1);
-    // TODO: version 1 -> to be optimized
-    #pragma omp parallel for schedule(guided) shared(k, rows, x, mat, y) private(z, t, limit, j) default(none)
-    for (i = 0; i < rows; i++) {
-        for (z = 0; z < k; z++) {
-            t = 0.0;
-
-            limit = (i != rows-1) ? mat.IRP[i+1] : mat.NZ;
+    #pragma omp parallel for shared(k, rows, x, mat, y) default(none)
+    for (i = 0; i < mat.M; i++) {
+        int j, z, limit = (i != rows-1) ? mat.IRP[i+1] : mat.NZ;
+        for (z = 0; z < k; z++) { //TODO: check order of loops
+            y[i*k+z] = 0.0;
             for (j = mat.IRP[i]; j < limit; j++) {
-                t += mat.AS[j]*(x[mat.JA[j]*k+z]);
+                y[i*k+z] += mat.AS[j]*(x[mat.JA[j]*k+z]);
             }
-            y[i*k+z] = t;
         }
     }
-
     clock_gettime(CLOCK_MONOTONIC, t2);
 }
 
@@ -156,18 +148,23 @@ void product_csr(CSR mat, const double* x, int k, double* y, struct timespec *t1
  * */
 void product_ell(ELL mat, const double* x, int k, double* y, struct timespec *t1, struct timespec *t2){
     int i, j, z, maxnz = mat.MAXNZ;
-    double t;
+    double t, val;
 
     clock_gettime(CLOCK_MONOTONIC, t1);
     // TODO: version 1 -> to be optimized
-    #pragma omp parallel for schedule(guided) shared(k, maxnz, x, mat, y) private(z, t, j) default(none)
+    #pragma omp parallel for schedule(guided) shared(k, maxnz, x, mat, y) private(z, t, j, val) default(none)
     for (i = 0; i < mat.M; i++) {
-        for (z = 0; z < k; z++) {
+        for (z = 0; z < k; z++) { //TODO: check order of loops
             t = 0.0;
 
             for (j = 0; j < maxnz; j++) {
-                t += mat.AS[i*maxnz+j]*x[mat.JA[i*maxnz+j]*k+z];
+                val = mat.AS[i*maxnz+j];
+                if (val == 0) { // if padding is reached break loop
+                    break;
+                }
+                t += val*x[mat.JA[i*maxnz+j]*k+z];
             }
+
             y[i*k+z] = t;
         }
     }
@@ -187,7 +184,7 @@ int main(int argc, char** argv) {
     bool ellpack;
 
     // check the correct use of the program
-    if (argc < 4){
+    if (argc < 5){
         fprintf(stderr, "Usage: %s [mm-filename] [storage-format] [k value] [num-threads]\n", argv[0]);
         exit(-1);
     }
@@ -221,7 +218,7 @@ int main(int argc, char** argv) {
     check_mat_type(t);
 
     // set number of threads
-    num_threads = 4;//(int)strtol(argv[4], NULL, 10);
+    num_threads = (int)strtol(argv[4], NULL, 10);
     omp_set_num_threads(num_threads);
 
     // convert to wanted storage format
@@ -269,12 +266,12 @@ int main(int argc, char** argv) {
 #ifdef AUDIT
     // print results
     print_matrix(y, m, k, "\nResult:\n");
-    fprintf(stdout, "\n%ld.%.9ld %ld.%.9ld\n", t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
 #endif
 
 #ifdef PERFORMANCE
     fprintf(stdout, "%ld.%.9ld %ld.%.9ld %d", t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec, nz);
 #endif
 
+    //fprintf(stdout, "\n%ld.%.9ld %ld.%.9ld\n", t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
     return 0;
 } 

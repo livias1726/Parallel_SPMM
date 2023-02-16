@@ -38,7 +38,7 @@ void insert_in_row(Elem** arr, Elem* node, int idx) {
  * @param nz pointer to the number of non-zeros (to be eventually updated)
  * @param t matrix type code
  * */
-Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){
+Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: check necessity to step through elems
     int r, c, i, onz;
 
     // process the matrix size information
@@ -47,12 +47,14 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){
 
     // array of lists of Elem: 1 per row
     Elem** elems = (Elem**) malloc((*m)* sizeof(Elem*));
-    malloc_handler(1, (void* []) {elems}, 48);
+    malloc_handler(1, (void* []) {elems}, 49);
     for (i = 0; i < *m; i++) { elems[i] = NULL; }
 
     // scan matrix
     for (i = 0; i < onz; i++){
         Elem* elem = (Elem*)malloc(sizeof(Elem));
+        malloc_handler(1, (void* []) {elem}, 55);
+
         if (mm_is_pattern(t)) {
             fscanf(f, "%d %d\n", &r, &c);
             elem->val = 1.0;
@@ -66,6 +68,8 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){
 
         if (mm_is_symmetric(t) && r != c) {
             Elem* elem_s = (Elem*)malloc(sizeof(Elem));
+            malloc_handler(1, (void* []) {elem}, 70);
+
             elem_s->val = elem->val;
             elem_s->j = r;
             elem_s->next = NULL;
@@ -112,7 +116,7 @@ ELL* alloc_ell(Elem** elems, int m, int n, int nz, int* maxnz){
     // 2D arrays are treated as 1D arrays
     mat->JA = calloc(m*(*maxnz), sizeof(int));
     mat->AS = (double*)calloc(m*(*maxnz), sizeof(double));
-    malloc_handler(2, (void* []) {mat->JA, mat->AS}, 160);
+    malloc_handler(2, (void* []) {mat->JA, mat->AS}, 117);
 
     // populate ELLPACK format
     mat->M = m;
@@ -120,89 +124,6 @@ ELL* alloc_ell(Elem** elems, int m, int n, int nz, int* maxnz){
     mat->NZ = nz;
     mat->MAXNZ = *maxnz;
 
-    return mat;
-}
-
-//-------------------------------------------------------------------------------------------Serial
-
-
-//-----------------------------------------------------------------------------------------OMP
-/**
- * Read the matrix into a CSR struct representing the matrix in CSR storage format
- *
- * @param f file descriptor
- * @param t matrix type code
- * */
-CSR* omp_read_mm_csr(FILE* f, MM_typecode t){
-    int i, m, n, nz, elem_count = 0;
-    Elem *curr, *prev;
-
-    // read matrix from file
-    Elem** elems = read_mm(f, &m, &n, &nz, t);
-    // alloc memory
-    CSR* mat = alloc_csr(m, n, nz);
-
-    // scan the array of lists: 1 per row
-    for (i = 0; i < m; i++){
-        curr = elems[i];
-
-        // skip empty rows
-        if (curr == NULL) { continue; }
-
-        // update rows pointers
-        mat->IRP[i] = elem_count;
-
-        // scan elements of i-th row and dealloc memory
-        while (curr != NULL) {
-            mat->AS[elem_count] = curr->val;
-            mat->JA[elem_count] = curr->j;
-
-            prev = curr;
-            curr = curr->next;
-            free(prev);
-            elem_count++;
-        }
-    }
-
-    free(elems);
-    return mat;
-}
-
-/**
- * Read the matrix into a ELL struct representing the matrix in ELLPACK storage format
- *
- * @param f file descriptor
- * @param t matrix type code
- * */
-ELL* omp_read_mm_ell(FILE* f, MM_typecode t){
-    int i, m, n, nz, maxnz, count = 0;
-    Elem *curr, *prev;
-
-    // read matrix from file
-    Elem** elems = read_mm(f, &m, &n, &nz, t);
-    // alloc memory
-    ELL* mat = alloc_ell(elems, m, n, nz, &maxnz);
-
-    // scan the array of lists: 1 per row
-    for (i = 0; i < m; i++){
-        curr = elems[i];
-
-        // scan elements of i-th row and dealloc memory
-        while (curr != NULL) {
-            mat->JA[i*maxnz + count] = curr->j;
-            mat->AS[i*maxnz + count] = curr->val;
-
-            prev = curr;
-            curr = curr->next;
-            free(prev);
-
-            count++;
-        }
-
-        count = 0;
-    }
-
-    free(elems);
     return mat;
 }
 
@@ -224,7 +145,7 @@ void populate_multivector(double* vec, int rows, int cols) {
 
 void alloc_struct(double** vec, int rows, int cols) {
     *vec = (double*) malloc(rows*cols* sizeof(double));
-    malloc_handler(1, (void*[]){*vec}, 209);
+    malloc_handler(1, (void*[]){*vec}, 147);
 }
 
 void malloc_handler(int size, void **p, int line) {

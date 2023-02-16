@@ -13,4 +13,5 @@ add_subdirectory(openmp)
 add_subdirectory(lib)
 add_subdirectory(utils)
 
-add_executable(test test.c)
+add_executable(s_test s_test.c)
+add_executable(omp_test omp_test.c)
