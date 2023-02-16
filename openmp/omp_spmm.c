@@ -68,6 +68,31 @@ CSR* read_mm_csr(FILE* f, MM_typecode t){
     return mat;
 }
 
+int* prepare_nz_balancing(int ts, int tot_nz, const int* irp, int tot_rows){
+    int* nz_start = (int*) malloc(ts* sizeof(int));
+    //TODO: check malloc
+    int r1, nz, start_row = 0;
+    int r2 = 0;
+
+    for (int i = 0; i < ts; i++) {
+        nz_start[i] = start_row; // add the idx of the start row
+        nz = ((i + 1) * tot_nz) / ts - (i * tot_nz) / ts; // compute the number of tot_nz to assign the i-th thread
+
+        for (int j = start_row; j < tot_rows; j++) {
+            r2 += irp[j + 1] - irp[j]; // get number of nz in the considered rows
+            if (r2 < nz) { // if the count of nz is still lower than the number of nz assigned to the thread
+                r1 = r2; // save value
+            } else {
+                // get the number of rows that includes a number of nz closer to the one assigned
+                start_row = ((r2 - nz) < (nz - r1)) ? j : j-1;
+                break;
+            }
+        }
+    }
+
+    return nz_start;
+}
+
 /**
  * Read the matrix into a ELL struct representing the matrix in ELLPACK storage format
  *
@@ -134,6 +159,27 @@ void product_csr(CSR mat, const double* x, int k, double* y, struct timespec *t1
             }
         }
     }
+    clock_gettime(CLOCK_MONOTONIC, t2);
+}
+
+void product_csr_2(CSR mat, const int* nz_start, const double* x, int k, double* y, struct timespec *t1, struct timespec *t2){
+    int i, j, z, limit, rows = mat.M, ts = omp_get_num_threads();
+
+    clock_gettime(CLOCK_MONOTONIC, t1);
+
+    #pragma omp parallel for private(i, j, z, limit) shared(ts,nz_start,k,y,mat,rows, x) default(none)
+    for (int t = 0; t < ts; t++) {
+        for (i = nz_start[t]; i < nz_start[t+1]; i++) {
+            limit = (i != rows-1) ? mat.IRP[i+1] : mat.NZ;
+            for (z = 0; z < k; z++) { //TODO: check order of loops
+                y[i*k+z] = 0.0;
+                for (j = mat.IRP[i]; j < limit; j++) {
+                    y[i*k+z] += mat.AS[j]*(x[mat.JA[j]*k+z]);
+                }
+            }
+        }
+    }
+
     clock_gettime(CLOCK_MONOTONIC, t2);
 }
 
@@ -257,7 +303,11 @@ int main(int argc, char** argv) {
         product_ell(*ell, x, k, y, &t1, &t2);
         free(ell);
     } else {
-        product_csr(*csr, x, k, y, &t1, &t2);
+        //TODO: prepare nz balancing
+        int* nz_start = prepare_nz_balancing(num_threads, nz, csr->IRP, csr->M);
+        //product_csr(*csr, x, k, y, &t1, &t2);
+        product_csr_2(*csr, nz_start, x, k, y, &t1, &t2);
+        free(nz_start);
         free(csr);
     }
 
