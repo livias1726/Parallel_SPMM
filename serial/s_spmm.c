@@ -234,7 +234,9 @@ int main(int argc, char** argv) {
         free(csr);
     }
 
+    //save_result(y, m, k);
     free(x);
+    free(y);
 
 #ifdef AUDIT
     // print results

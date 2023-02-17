@@ -79,6 +79,7 @@ ELL* alloc_ell(Elem** elems, int m, int n, int nz, int* maxnz);
 void check_mat_type(MM_typecode);
 void malloc_handler(int, void**, int);
 void populate_multivector(double*, int, int);
+void save_result(double*, int, int);
 void alloc_struct(double**, int, int);
 
 void print_matrix(double*, int, int, char*);
