@@ -1,7 +1,4 @@
 project(openmp)
-cmake_minimum_required(VERSION 2.8)
-
-set(CMAKE_C_STANDARD 11)
 
 find_package(OpenMP)
 
@@ -11,8 +8,11 @@ if (OPENMP_FOUND)
     set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
 endif()
 
-if (AUDIT)
+if (PERFORMANCE)
+    add_definitions(-DPERFORMANCE=1)
+    add_executable(omp_test omp_test.c)
+elseif(AUDIT)
     add_definitions(-DAUDIT=1)
-endif (AUDIT)
+endif ()
 
 add_executable(omp_spmm omp_spmm.c ../lib/mmio.c ../utils/utils.c)

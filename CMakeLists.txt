@@ -3,15 +3,12 @@ cmake_minimum_required(VERSION 2.8)
 
 set(CMAKE_C_STANDARD 11)
 
-if (PERFORMANCE)
-    add_definitions(-DPERFORMANCE=1)
-endif (PERFORMANCE)
+if (OPENMP)
+    add_subdirectory(openmp)
+endif(OPENMP)
 
-add_subdirectory(serial)
-add_subdirectory(openmp)
-#add_subdirectory(cuda)
-add_subdirectory(lib)
-add_subdirectory(utils)
+if (CUDA)
+    add_subdirectory(cuda)
+endif (CUDA)
 
-add_executable(s_test s_test.c)
-add_executable(omp_test omp_test.c)
+
