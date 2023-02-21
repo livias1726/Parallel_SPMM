@@ -8,13 +8,14 @@
 #include "../lib/mmio.h"
 
 #ifndef SCPA_PROJECT_UTILS_H
-#define SCPA_PROJECT_UTILS_H
+    #define SCPA_PROJECT_UTILS_H
+#endif
 
-#endif //SCPA_PROJECT_UTILS_H
+#define get_elapsed_nano(ts1, tn1, ts2, tn2) ((ts2 - ts1) * 1.e9 + (tn2 - tn1))
+#define get_gflops(t, k, nz) ((double)(2*k*nz)/t)
 
 #define PATH_MAX 512
-#define NAME_MAX 256
-#define IO_MAX 1024
+#define STRUCT_DIM 6
 
 /**
  * Elem:
@@ -76,11 +77,17 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t);
 CSR* alloc_csr(int m, int n, int nz);
 ELL* alloc_ell(Elem** elems, int m, int n, int nz, int* maxnz);
 
-void check_mat_type(MM_typecode);
+void process_mm(MM_typecode* t, FILE *f);
 void malloc_handler(int, void**, int);
 void populate_multivector(double*, int, int);
 void save_result(double*, int, int);
 void alloc_struct(double**, int, int);
+
+double get_absolute_error(int dim, double* seq, double* par);
+double get_relative_error(int dim, double abs, double* seq);
+
+void serial_product_csr(CSR mat, const double* x, int k, double* y, struct timespec *t1, struct timespec *t2);
+void serial_product_ell(ELL mat, const double* x, int k, double* y, struct timespec *t1, struct timespec *t2);
 
 void print_matrix(double*, int, int, char*);
 void print_csr(CSR*);

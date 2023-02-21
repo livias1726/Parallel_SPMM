@@ -1,5 +1,4 @@
-#include <omp.h>
-#include "../utils/utils.h"
+#include "omp_utils.h"
 
 /**
  * omp_spmm performs an OpenMP multithreaded version of a matrix-multivector multiplication Y <- AX where
@@ -8,138 +7,26 @@
  * */
 
 //---------------------------------------------------------------------------------------------------Pre-processing
-/**
- * Read the matrix into a CSR struct representing the matrix in CSR storage format
- *
- * @param f file descriptor
- * @param t matrix type code
- * */
-CSR* read_mm_csr(FILE* f, MM_typecode t){
-    // original variables
-    int i, m, n, nz;
-    Elem *curr, *prev;
-    // parallel variables
-    int idx, nz_add;
-
-    // read matrix from file
-    Elem** elems = read_mm(f, &m, &n, &nz, t);
-    // alloc memory
-    CSR* mat = alloc_csr(m, n, nz);
-
-    // used to avoid critical section coordination in parallel execution
-    int elem_counts[m];
-    // TODO: check if it is better like this or with critical sections in openmp block
-    for (i = 0; i < m; i++) {
-        curr = elems[i];
-        nz_add = (curr == NULL) ? 0 : curr->nz;
-        elem_counts[i] = (i == 0) ? nz_add : elem_counts[i-1] + nz_add;
+void process_arguments(int argc, char** argv, FILE *f, bool* ell_flag, int* k){
+    if (argc < 5){
+        fprintf(stderr, "Usage: %s [mm-filename] [storage-format] [k value] [num-threads]\n", argv[0]);
+        exit(-1);
     }
 
-    // scan the array of lists: 1 per row
-    /* A static schedule is non-optimal when the different iterations take different amounts of time*/
-    #pragma omp parallel for schedule(guided) \
-            shared(m, elems, mat, elem_counts) \
-            private(idx, curr, prev) \
-            default(none)
-    for (i = 0; i < m; i++){
-        curr = elems[i];
-        // skip empty rows
-        if (curr == NULL) { continue; }
+    // create file path
+    char path[PATH_MAX] = "../resources/files/";
+    strcat(path, argv[1]);
 
-        // update rows pointers
-        mat->IRP[i] = (i == 0) ? 0 : elem_counts[i-1];
-
-        // scan elements of i-th row and dealloc memory
-        // range of action per thread: [elem_counts[i-1], elem_count[i])
-        idx = mat->IRP[i];
-        while (curr != NULL && idx < elem_counts[i]) {
-            mat->AS[idx] = curr->val;
-            mat->JA[idx] = curr->j;
-
-            prev = curr;
-            curr = curr->next;
-            free(prev);
-
-            idx++;
-        }
+    //check the correct opening of the matrix file
+    f = fopen(path, "r");
+    if (f == NULL) {
+        fprintf(stderr, "Cannot open '%s'\n", path);
+        exit(-1);
     }
 
-    free(elems);
-    return mat;
-}
-
-int* nz_balancing(int ts, int tot_nz, const int* irp, int tot_rows){
-    int i, j, r1, nz, start_row = 0, r2 = 0;
-
-    int* nz_start = (int*) malloc(ts* sizeof(int));
-    malloc_handler(1, (void*[]){nz_start}, 147);
-
-    for (i = 0; i < ts; i++) {
-        nz_start[i] = start_row; // add the idx of the start row
-        if (i == ts-1) { // if last thread, get the remaining rows
-            break;
-        }
-
-        nz = ((i + 1) * tot_nz) / ts - (i * tot_nz) / ts; // compute the number of tot_nz to assign the i-th thread
-
-        for (j = start_row; j < tot_rows; j++) {
-            r2 += irp[j + 1] - irp[j]; // get number of nz in the considered rows
-
-            if (r2 < nz) { // if the count of nz is still lower than the number of nz assigned to the thread
-                r1 = r2; // save value
-            } else {
-                // get the number of rows that includes a number of nz closer to the one assigned
-                start_row = ((r2 - nz) < (nz - r1)) ? j+1 : j;
-                break;
-            }
-        }
-
-        r2 = 0;
-    }
-
-    return nz_start;
-}
-
-/**
- * Read the matrix into a ELL struct representing the matrix in ELLPACK storage format
- *
- * @param f file descriptor
- * @param t matrix type code
- * */
-ELL* read_mm_ell(FILE* f, MM_typecode t){
-    int i, m, n, nz, maxnz, count = 0;
-    Elem *curr, *prev;
-
-    // read matrix from file
-    Elem** elems = read_mm(f, &m, &n, &nz, t);
-    // alloc memory
-    ELL* mat = alloc_ell(elems, m, n, nz, &maxnz);
-
-    // scan the array of lists: 1 per row
-    #pragma omp parallel for schedule(guided) \
-            shared(m, maxnz, elems, mat) \
-            private(count, curr, prev) \
-            default(none)
-    for (i = 0; i < m; i++){
-        curr = elems[i];
-
-        // scan elements of i-th row and dealloc memory
-        while (curr != NULL) {
-            mat->JA[i*maxnz + count] = curr->j;
-            mat->AS[i*maxnz + count] = curr->val;
-
-            prev = curr;
-            curr = curr->next;
-            free(prev);
-
-            count++;
-        }
-
-        count = 0;
-    }
-
-    free(elems);
-    return mat;
+    // get k value and desired storage format
+    *ell_flag = !strcmp(argv[2], "ellpack");
+    *k = (int)strtol(argv[3], NULL, 10);
 }
 
 //---------------------------------------------------------------------------------------------------Product
@@ -183,7 +70,6 @@ void product_csr(CSR mat, const int* nz_start, int num_threads, const double* x,
     clock_gettime(CLOCK_MONOTONIC, t2);
 }
 
-
 /**
  * Computes the product with A stored in a ELL format
  *
@@ -225,44 +111,15 @@ int main(int argc, char** argv) {
     FILE *f;
     CSR* csr;
     ELL* ell;
-    double *x, *y;
+    long time;
+    double gflops_s, gflops_p, abs_err, rel_err;
+    double *x, *y_s, *y_p;
     int k, m, n, nz, num_threads;
     struct timespec t1, t2;
     bool ellpack;
 
-    // check the correct use of the program
-    if (argc < 5){
-        fprintf(stderr, "Usage: %s [mm-filename] [storage-format] [k value] [num-threads]\n", argv[0]);
-        exit(-1);
-    }
-
-    // create file path
-#ifdef PERFORMANCE
-    char path[PATH_MAX] = "resources/files/";
-#else
-    char path[PATH_MAX] = "../resources/files/";
-#endif
-    strcat(path, argv[1]);
-
-    //check the correct opening of the matrix file
-    f = fopen(path, "r");
-    if (f == NULL) {
-        fprintf(stderr, "Cannot open '%s'\n", path);
-        exit(-1);
-    }
-
-    // get k value and desired storage format
-    ellpack = (strcmp(argv[2], "ellpack") == 0) ? true : false;
-    k = (int)strtol(argv[3], NULL, 10);
-
-    // process the first line of file and identify the matrix type
-    if (mm_read_banner(f, &t) != 0){
-        printf("Could not process Matrix Market banner.\n");
-        exit(-1);
-    }
-
-    // check matrix type support
-    check_mat_type(t);
+    process_arguments(argc, argv, f, &ellpack, &k);
+    process_mm(&t, f);
 
     // set number of threads
     num_threads = (int)strtol(argv[4], NULL, 10);
@@ -290,7 +147,8 @@ int main(int argc, char** argv) {
     fclose(f);
 
     alloc_struct(&x, n, k);
-    alloc_struct(&y, m ,k);
+    alloc_struct(&y_s, m ,k);
+    alloc_struct(&y_p, m ,k);
 
     populate_multivector(x, n, k);
 
@@ -301,18 +159,37 @@ int main(int argc, char** argv) {
 
     // compute the product
     if (ellpack) {
-        product_ell(*ell, x, k, y, &t1, &t2);
+        serial_product_ell(*ell, x, k, y_s, &t1, &t2);
+        time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
+        gflops_s = get_gflops(time, k, nz);
+
+        //TODO: optimize ell prod
+        product_ell(*ell, x, k, y_p, &t1, &t2);
+        time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
+        gflops_p = get_gflops(time, k, nz);
+
         free(ell);
     } else {
+        serial_product_csr(*csr, x, k, y_s, &t1, &t2);
+        time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
+        gflops_s = get_gflops(time, k, nz);
+
         int* nz_start = nz_balancing(num_threads, nz, csr->IRP, csr->M);
-        product_csr(*csr, nz_start, num_threads, x, k, y, &t1, &t2);
+        product_csr(*csr, nz_start, num_threads, x, k, y_p, &t1, &t2);
+        time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
+        gflops_p = get_gflops(time, k, nz);
+
         free(nz_start);
         free(csr);
     }
 
+    abs_err = get_absolute_error(m*k, y_s, y_p);
+    rel_err = get_relative_error(m*k, abs_err, y_s);
+
     //save_result(y, m, k);
+    free(y_s);
+    free(y_p);
     free(x);
-    free(y);
 
 #ifdef AUDIT
     // print results
@@ -320,9 +197,11 @@ int main(int argc, char** argv) {
 #endif
 
 #ifdef PERFORMANCE
-    fprintf(stdout, "%ld.%.9ld %ld.%.9ld %d", t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec, nz);
+    fprintf(stdout, "%f %f %f %f", gflops_s, gflops_p, abs_err, rel_err);
+#else
+    fprintf(stdout, "\nSerial GFLOPS: %f\nParallel GFLOPS: %f\nAbsolute error: %f\nRelative error: %f\n",
+            gflops_s, gflops_p, abs_err, rel_err);
 #endif
 
-    //fprintf(stdout, "\n%ld.%.9ld %ld.%.9ld\n", t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
     return 0;
 } 

@@ -1,5 +1,5 @@
 #include <unistd.h>
-#include "utils/utils.h"
+#include "../utils/utils.h"
 
 #define NUM_RUNS 5
 #define NUM_STORAGE 1
@@ -28,21 +28,6 @@ void tokenize_output (char* output, double* start, double* end, int* nz) {
         *nz = (int)strtol(tokens[2], NULL, 10);
     }
 }
-
-double elapsed_nanoseconds (double start, double end) {
-    double secs, nanos = modf(start, &secs);
-    double sece, nanoe = modf(end, &sece);
-
-    double sec = sece - secs;
-    double nano = nanoe - nanos;
-
-    if (sec != 0) {
-        nano += (sec* pow(10,9));
-    }
-
-    return nano;
-}
-
 
 int main(){
 
@@ -120,13 +105,14 @@ int main(){
                             exit(-1);
                         }
 
-                        tokenize_output(output, &start, &end, &nz);
-                        time = elapsed_nanoseconds(start, end);
-                        gflops += get_gflops(time, ks[j], nz);
+                        tokenize_output(output, &tmp_gfs, &tmp_gfp);
+                        gflops_s += tmp_gfs;
+                        gflops_p += tmp_gfp;
                     }
 
                     // retrieve average gflops
-                    gflops = gflops / NUM_RUNS;
+                    gflops_s = gflops_s / NUM_RUNS;
+                    gflops_p = gflops_p / NUM_RUNS;
 
                     // save on csv
                     fprintf(out_file, "%s,%s,%d,%d,%f\n", name, storage[i], ks[j], s, gflops);

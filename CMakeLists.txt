@@ -5,10 +5,8 @@ set(CMAKE_C_STANDARD 11)
 
 if (OPENMP)
     add_subdirectory(openmp)
-endif(OPENMP)
-
-if (CUDA)
+else()
     add_subdirectory(cuda)
-endif (CUDA)
+endif ()
 
 

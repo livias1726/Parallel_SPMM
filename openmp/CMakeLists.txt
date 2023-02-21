@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 2.8)
 project(openmp)
 
 find_package(OpenMP)
@@ -15,4 +16,22 @@ elseif(AUDIT)
     add_definitions(-DAUDIT=1)
 endif ()
 
-add_executable(omp_spmm omp_spmm.c ../lib/mmio.c ../utils/utils.c)
+if (MPI)
+    set(CMAKE_PREFIX_PATH "/home/hecate/opt/openmpi")
+    find_package(MPI REQUIRED)
+    if(MPI_FOUND)
+        include_directories(${MPI_INCLUDE_PATH})
+        set(MPI_CXX_COMPILER ${MPI_BIN_PATH}/mpicxx)
+        set(MPI_C_COMPILER ${MPI_BIN_PATH}/mpicc)
+        set(MPIEXEC_EXECUTABLE ${MPI_BIN_PATH}/mpiexec)
+
+        add_executable(ompi_spmm ompi_spmm.c ../lib/mmio.c ../utils/utils.c ../utils/serial.c ../utils/storage.c ../utils/error.c ../utils/io.c omp_utils.c)
+
+        target_compile_options(ompi_spmm PRIVATE ${MPI_CXX_COMPILE_FLAGS})
+        target_link_libraries(ompi_spmm ${MPI_CXX_LIBRARIES} ${MPI_CXX_LINK_FLAGS})
+    else()
+        message(SEND_ERROR "This application cannot compile without MPI")
+    endif()
+else()
+    add_executable(omp_spmm omp_spmm.c ../lib/mmio.c ../utils/utils.c ../utils/serial.c ../utils/storage.c ../utils/error.c ../utils/io.c omp_utils.c omp_utils.h)
+endif()
