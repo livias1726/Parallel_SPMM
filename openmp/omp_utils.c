@@ -116,7 +116,7 @@ int* nz_balancing(int ts, int tot_nz, const int* irp, int tot_rows){
     int i, j, r1, nz, start_row = 0, r2 = 0;
 
     int* nz_start = (int*) malloc(ts* sizeof(int));
-    malloc_handler(1, (void*[]){nz_start}, 147);
+    malloc_handler(1, (void*[]){nz_start});
 
     for (i = 0; i < ts; i++) {
         nz_start[i] = start_row; // add the idx of the start row

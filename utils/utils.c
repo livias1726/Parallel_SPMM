@@ -25,14 +25,20 @@ void populate_multivector(double* vec1, int rows, int cols) {
 
 void alloc_struct(double** vec, int rows, int cols) {
     *vec = (double*) malloc(rows*cols* sizeof(double));
-    malloc_handler(1, (void*[]){*vec}, 147);
+    malloc_handler(1, (void*[]){*vec});
 }
 
-void malloc_handler(int size, void **p, int line) {
+void malloc_handler(int size, void **p) {
     for(int i=0; i<size; i++){
         if(p[i] == NULL){
-            fprintf(stderr, "Malloc failed on line %d\n", line);
+            fprintf(stderr, "Malloc failed.\n");
             exit(-1);
         }
+    }
+}
+
+void clean_up(int size, void **p){
+    for(int i=0; i<size; i++){
+        free(p[i]);
     }
 }

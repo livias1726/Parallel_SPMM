@@ -43,13 +43,13 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: c
 
     // array of lists of Elem: 1 per row
     Elem** elems = (Elem**) malloc((*m)* sizeof(Elem*));
-    malloc_handler(1, (void* []) {elems}, 49);
+    malloc_handler(1, (void* []) {elems});
     for (i = 0; i < *m; i++) { elems[i] = NULL; }
 
     // scan matrix
     for (i = 0; i < onz; i++){
         Elem* elem = (Elem*)malloc(sizeof(Elem));
-        malloc_handler(1, (void* []) {elem}, 55);
+        malloc_handler(1, (void* []) {elem});
 
         if (mm_is_pattern(t)) {
             fscanf(f, "%d %d\n", &r, &c);
@@ -64,7 +64,7 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: c
 
         if (mm_is_symmetric(t) && r != c) {
             Elem* elem_s = (Elem*)malloc(sizeof(Elem));
-            malloc_handler(1, (void* []) {elem}, 70);
+            malloc_handler(1, (void* []) {elem});
 
             elem_s->val = elem->val;
             elem_s->j = r;
@@ -81,12 +81,12 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: c
 CSR* alloc_csr(int m, int n, int nz){
     // alloc memory
     CSR* mat = (CSR*) malloc(sizeof(CSR));
-    malloc_handler(1, (void* []) {mat}, 90);
+    malloc_handler(1, (void* []) {mat});
 
     mat->IRP = (int*)malloc(m*sizeof(int));
     mat->JA = (int*)malloc(nz*sizeof(int));
     mat->AS = (double*)malloc(nz*sizeof(double));
-    malloc_handler(3, (void* []) {mat->IRP, mat->JA, mat->AS}, 95);
+    malloc_handler(3, (void* []) {mat->IRP, mat->JA, mat->AS});
 
     // populate CSR format
     mat->M = m;
@@ -107,12 +107,12 @@ ELL* alloc_ell(Elem** elems, int m, int n, int nz, int* maxnz){
 
     // alloc memory
     ELL* mat = (ELL*) malloc(sizeof(ELL));
-    malloc_handler(1, (void* []) {mat}, 155);
+    malloc_handler(1, (void* []) {mat});
     // calloc is used to avoid the addition of padding in a loop
     // 2D arrays are treated as 1D arrays
     mat->JA = calloc(m*(*maxnz), sizeof(int));
     mat->AS = (double*)calloc(m*(*maxnz), sizeof(double));
-    malloc_handler(2, (void* []) {mat->JA, mat->AS}, 117);
+    malloc_handler(2, (void* []) {mat->JA, mat->AS});
 
     // populate ELLPACK format
     mat->M = m;

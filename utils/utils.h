@@ -78,7 +78,8 @@ CSR* alloc_csr(int m, int n, int nz);
 ELL* alloc_ell(Elem** elems, int m, int n, int nz, int* maxnz);
 
 void process_mm(MM_typecode* t, FILE *f);
-void malloc_handler(int, void**, int);
+void malloc_handler(int, void**);
+void clean_up(int, void**);
 void populate_multivector(double*, int, int);
 void save_result(double*, int, int);
 void alloc_struct(double**, int, int);

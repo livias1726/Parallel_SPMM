@@ -7,9 +7,9 @@
  * */
 
 //---------------------------------------------------------------------------------------------------Pre-processing
-void process_arguments(int argc, char** argv, FILE *f, bool* ell_flag, int* k){
-    if (argc < 5){
-        fprintf(stderr, "Usage: %s [mm-filename] [storage-format] [k value] [num-threads]\n", argv[0]);
+void process_arguments(int argc, char** argv, FILE **f, int* k){
+    if (argc < 4){
+        fprintf(stderr, "Usage: %s [mm-filename] [k value] [num-threads]\n", argv[0]);
         exit(-1);
     }
 
@@ -18,15 +18,14 @@ void process_arguments(int argc, char** argv, FILE *f, bool* ell_flag, int* k){
     strcat(path, argv[1]);
 
     //check the correct opening of the matrix file
-    f = fopen(path, "r");
-    if (f == NULL) {
+    *f = fopen(path, "r");
+    if (*f == NULL) {
         fprintf(stderr, "Cannot open '%s'\n", path);
         exit(-1);
     }
 
     // get k value and desired storage format
-    *ell_flag = !strcmp(argv[2], "ellpack");
-    *k = (int)strtol(argv[3], NULL, 10);
+    *k = (int)strtol(argv[2], NULL, 10);
 }
 
 //---------------------------------------------------------------------------------------------------Product
@@ -116,34 +115,32 @@ int main(int argc, char** argv) {
     double *x, *y_s, *y_p;
     int k, m, n, nz, num_threads;
     struct timespec t1, t2;
-    bool ellpack;
 
-    process_arguments(argc, argv, f, &ellpack, &k);
+    process_arguments(argc, argv, &f, &k);
     process_mm(&t, f);
 
     // set number of threads
-    num_threads = (int)strtol(argv[4], NULL, 10);
+    num_threads = (int)strtol(argv[3], NULL, 10);
     omp_set_num_threads(num_threads);
 
     // convert to wanted storage format
-    if (ellpack) {
-        ell = read_mm_ell(f, t);
-        m = ell->M;
-        n = ell->N;
-        nz = ell->NZ;
-#ifdef AUDIT
-        print_ell(ell);
+#ifdef ELLPACK
+    ell = read_mm_ell(f, t);
+    m = ell->M;
+    n = ell->N;
+    nz = ell->NZ;
+    #ifdef DEBUG
+    print_ell(ell);
+    #endif
+#else
+    csr = read_mm_csr(f, t);
+    m = csr->M;
+    n = csr->N;
+    nz = csr->NZ;
+    #ifdef DEBUG
+    print_csr(csr);
+    #endif
 #endif
-    } else {
-        csr = read_mm_csr(f, t);
-        m = csr->M;
-        n = csr->N;
-        nz = csr->NZ;
-#ifdef AUDIT
-        print_csr(csr);
-#endif
-    }
-
     fclose(f);
 
     alloc_struct(&x, n, k);
@@ -152,36 +149,36 @@ int main(int argc, char** argv) {
 
     populate_multivector(x, n, k);
 
-#ifdef AUDIT
+#ifdef DEBUG
     // print results
     print_matrix(x, n, k, "\nMultivector:\n");
 #endif
 
     // compute the product
-    if (ellpack) {
-        serial_product_ell(*ell, x, k, y_s, &t1, &t2);
-        time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
-        gflops_s = get_gflops(time, k, nz);
+#ifdef ELLPACK
+    serial_product_ell(*ell, x, k, y_s, &t1, &t2);
+    time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
+    gflops_s = get_gflops(time, k, nz);
 
-        //TODO: optimize ell prod
-        product_ell(*ell, x, k, y_p, &t1, &t2);
-        time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
-        gflops_p = get_gflops(time, k, nz);
+    //TODO: optimize ell prod
+    product_ell(*ell, x, k, y_p, &t1, &t2);
+    time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
+    gflops_p = get_gflops(time, k, nz);
 
-        free(ell);
-    } else {
-        serial_product_csr(*csr, x, k, y_s, &t1, &t2);
-        time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
-        gflops_s = get_gflops(time, k, nz);
+    free(ell);
+#else
+    serial_product_csr(*csr, x, k, y_s, &t1, &t2);
+    time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
+    gflops_s = get_gflops(time, k, nz);
 
-        int* nz_start = nz_balancing(num_threads, nz, csr->IRP, csr->M);
-        product_csr(*csr, nz_start, num_threads, x, k, y_p, &t1, &t2);
-        time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
-        gflops_p = get_gflops(time, k, nz);
+    int* nz_start = nz_balancing(num_threads, nz, csr->IRP, csr->M);
+    product_csr(*csr, nz_start, num_threads, x, k, y_p, &t1, &t2);
+    time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
+    gflops_p = get_gflops(time, k, nz);
 
-        free(nz_start);
-        free(csr);
-    }
+    free(nz_start);
+    free(csr);
+#endif
 
     abs_err = get_absolute_error(m*k, y_s, y_p);
     rel_err = get_relative_error(m*k, abs_err, y_s);
@@ -191,7 +188,7 @@ int main(int argc, char** argv) {
     free(y_p);
     free(x);
 
-#ifdef AUDIT
+#ifdef DEBUG
     // print results
     print_matrix(y, m, k, "\nResult:\n");
 #endif
