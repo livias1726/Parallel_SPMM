@@ -87,7 +87,7 @@ void alloc_struct(double**, int, int);
 double get_absolute_error(int dim, double* seq, double* par);
 double get_relative_error(int dim, double abs, double* seq);
 
-void serial_product_csr(CSR mat, const double* x, int k, double* y, struct timespec *t1, struct timespec *t2);
+void serial_product_csr(CSR* mat, const double* x, int k, double* y);
 void serial_product_ell(ELL mat, const double* x, int k, double* y, struct timespec *t1, struct timespec *t2);
 
 void print_matrix(double*, int, int, char*);

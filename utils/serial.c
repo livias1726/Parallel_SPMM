@@ -9,23 +9,21 @@
  * @param t1 pointer to first timeval structure
  * @param t2 pointer to second timeval structure
  * */
-void serial_product_csr(CSR mat, const double* x, int k, double* y, struct timespec *t1, struct timespec *t2){
-    int i, j, z, limit, rows = mat.M;
+void serial_product_csr(CSR* mat, const double* x, int k, double* y){
+    int i, j, z, limit, rows = mat->M;
     double t;
 
-    clock_gettime(CLOCK_MONOTONIC, t1);
-    for (z = 0; z < k; z++) {
-        for (i = 0; i < rows; i++) {
-            t = 0.0;
+    for (i = 0; i < rows; i++) {
+        limit = (i == rows-1) ? mat->NZ : mat->IRP[i+1];
 
-            limit = (i != rows-1) ? mat.IRP[i+1] : mat.NZ;
-            for (j = mat.IRP[i]; j < limit; j++) {
-                t += mat.AS[j]*(x[mat.JA[j]*k+z]);
+        for (z = 0; z < k; z++) {
+            t = 0.0;
+            for (j = mat->IRP[i]; j < limit; j++) {
+                t += mat->AS[j]*(x[mat->JA[j]*k+z]);
             }
             y[i*k+z] = t;
         }
     }
-    clock_gettime(CLOCK_MONOTONIC, t2);
 }
 
 /**

@@ -6,28 +6,6 @@
  * - X is a multivector with given k columns
  * */
 
-//---------------------------------------------------------------------------------------------------Pre-processing
-void process_arguments(int argc, char** argv, FILE **f, int* k){
-    if (argc < 4){
-        fprintf(stderr, "Usage: %s [mm-filename] [k value] [num-threads]\n", argv[0]);
-        exit(-1);
-    }
-
-    // create file path
-    char path[PATH_MAX] = "../resources/files/";
-    strcat(path, argv[1]);
-
-    //check the correct opening of the matrix file
-    *f = fopen(path, "r");
-    if (*f == NULL) {
-        fprintf(stderr, "Cannot open '%s'\n", path);
-        exit(-1);
-    }
-
-    // get k value and desired storage format
-    *k = (int)strtol(argv[2], NULL, 10);
-}
-
 //---------------------------------------------------------------------------------------------------Product
 /**
  * Computes the product with A stored in a CSR format
@@ -37,27 +15,22 @@ void process_arguments(int argc, char** argv, FILE **f, int* k){
  * @param x multivector Nxk stored as 1D array
  * @param k number of columns of x
  * @param y receives product results Mxk stored as 1D array
- * @param t1 pointer to first timeval structure
- * @param t2 pointer to second timeval structure
  * */
-void product_csr(CSR mat, const int* nz_start, int num_threads, const double* x, int k, double* y,
-                 struct timespec *t1, struct timespec *t2){
-    int i, j, z, lim_col, lim_row, rows = mat.M;
-    double temp;
+void product_csr(CSR mat, const int* nz_start, int num_threads, const double* x, int k, double* y){
+    int rows = mat.M;
 
-    clock_gettime(CLOCK_MONOTONIC, t1);
+    #pragma omp parallel for num_threads(num_threads) shared(nz_start,num_threads,k,y,mat,rows, x) default(none)
+    for (int tid = 0; tid < num_threads; tid++) {
+        int limit, z, j;
+        double temp;
 
-    #pragma omp parallel for private(i, j, z, lim_col, lim_row, temp) shared(nz_start,num_threads,k,y,mat,rows, x) default(none)
-    for (int t = 0; t < num_threads; t++) {
+        for (int i = nz_start[tid]; i < nz_start[tid+1]; i++) {
+            limit = (i != rows-1) ? mat.IRP[i+1] : mat.NZ;
 
-        lim_row = (t != num_threads-1) ? nz_start[t+1] : rows;
-        for (i = nz_start[t]; i < lim_row; i++) {
-
-            lim_col = (i != rows-1) ? mat.IRP[i+1] : mat.NZ;
             for (z = 0; z < k; z++) {
                 temp = 0.0;
 
-                for (j = mat.IRP[i]; j < lim_col; j++) {
+                for (j = mat.IRP[i]; j < limit; j++) {
                     temp += mat.AS[j]*(x[mat.JA[j]*k+z]);
                 }
 
@@ -65,8 +38,6 @@ void product_csr(CSR mat, const int* nz_start, int num_threads, const double* x,
             }
         }
     }
-
-    clock_gettime(CLOCK_MONOTONIC, t2);
 }
 
 /**
@@ -111,17 +82,12 @@ int main(int argc, char** argv) {
     CSR* csr;
     ELL* ell;
     long time;
-    double gflops_s, gflops_p, abs_err, rel_err;
-    double *x, *y_s, *y_p;
+    double gflops_s, gflops_p, abs_err, rel_err, *x, *y_s, *y_p;
     int k, m, n, nz, num_threads;
     struct timespec t1, t2;
 
-    process_arguments(argc, argv, &f, &k);
+    process_arguments(argc, argv, &f, &k, &num_threads);
     process_mm(&t, f);
-
-    // set number of threads
-    num_threads = (int)strtol(argv[3], NULL, 10);
-    omp_set_num_threads(num_threads);
 
     // convert to wanted storage format
 #ifdef ELLPACK
@@ -167,36 +133,47 @@ int main(int argc, char** argv) {
 
     free(ell);
 #else
-    serial_product_csr(*csr, x, k, y_s, &t1, &t2);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    serial_product_csr(*csr, x, k, y_s);
+    clock_gettime(CLOCK_MONOTONIC, &t2);
+
     time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
     gflops_s = get_gflops(time, k, nz);
 
-    int* nz_start = nz_balancing(num_threads, nz, csr->IRP, csr->M);
-    product_csr(*csr, nz_start, num_threads, x, k, y_p, &t1, &t2);
+    int* rows_idx = nz_balancing(num_threads, nz, csr->IRP, csr->M);
+
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    product_csr(*csr, rows_idx, num_threads, x, k, y_p);
+    clock_gettime(CLOCK_MONOTONIC, &t2);
+
     time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
     gflops_p = get_gflops(time, k, nz);
 
-    free(nz_start);
+    free(rows_idx);
     free(csr);
 #endif
 
     abs_err = get_absolute_error(m*k, y_s, y_p);
     rel_err = get_relative_error(m*k, abs_err, y_s);
+#ifdef SAVE
+    save_result(y_p, m, k);
+#endif
 
-    //save_result(y, m, k);
-    free(y_s);
-    free(y_p);
     free(x);
 
 #ifdef DEBUG
     // print results
-    print_matrix(y, m, k, "\nResult:\n");
+    print_matrix(y_s, m, k, "\nSerial Result:\n");
+    print_matrix(y_p, m, k, "\nParallel Result:\n");
 #endif
+
+    free(y_s);
+    free(y_p);
 
 #ifdef PERFORMANCE
     fprintf(stdout, "%f %f %f %f", gflops_s, gflops_p, abs_err, rel_err);
 #else
-    fprintf(stdout, "\nSerial GFLOPS: %f\nParallel GFLOPS: %f\nAbsolute error: %f\nRelative error: %f\n",
+    fprintf(stdout, "Serial GFLOPS: %f\nParallel GFLOPS: %f\nAbsolute error: %f\nRelative error: %f\n",
             gflops_s, gflops_p, abs_err, rel_err);
 #endif
 

@@ -115,12 +115,14 @@ ELL* read_mm_ell(FILE* f, MM_typecode t){
 int* nz_balancing(int ts, int tot_nz, const int* irp, int tot_rows){
     int i, j, r1, nz, start_row = 0, r2 = 0;
 
-    int* nz_start = (int*) malloc(ts* sizeof(int));
-    malloc_handler(1, (void*[]){nz_start});
+    int* rows_idx = (int*) malloc((ts+1) * sizeof(int));
+    malloc_handler(1, (void*[]){rows_idx});
 
     for (i = 0; i < ts; i++) {
-        nz_start[i] = start_row; // add the idx of the start row
+        rows_idx[i] = start_row; // add the idx of the start row
+
         if (i == ts-1) { // if last thread, get the remaining rows
+            rows_idx[i+1] = tot_rows;
             break;
         }
 
@@ -141,5 +143,29 @@ int* nz_balancing(int ts, int tot_nz, const int* irp, int tot_rows){
         r2 = 0;
     }
 
-    return nz_start;
+    return rows_idx;
+}
+
+void process_arguments(int argc, char** argv, FILE **f, int* k, int* num_threads){
+    if (argc < 4){
+        fprintf(stderr, "Usage: %s [mm-filename] [k value] [num-threads]\n", argv[0]);
+        exit(-1);
+    }
+
+    // create file path
+    char path[PATH_MAX] = "../resources/files/";
+    strcat(path, argv[1]);
+
+    //check the correct opening of the matrix file
+    *f = fopen(path, "r");
+    if (*f == NULL) {
+        fprintf(stderr, "Cannot open '%s'\n", path);
+        exit(-1);
+    }
+
+    // get k value and desired storage format
+    *k = (int)strtol(argv[2], NULL, 10);
+
+    // set number of threads
+    *num_threads = (int)strtol(argv[3], NULL, 10);
 }
