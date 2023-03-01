@@ -10,18 +10,16 @@
  * @param t2 pointer to second timeval structure
  * */
 void serial_product_csr(CSR* mat, const double* x, int k, double* y){
-    int i, j, z, limit, rows = mat->M;
-    double t;
+    int i, j, z, rows = mat->M, *irp = mat->IRP, *ja = mat->JA;
+    double *t, *as = mat->AS;
 
     for (i = 0; i < rows; i++) {
-        limit = (i == rows-1) ? mat->NZ : mat->IRP[i+1];
+        t = &y[i*k];
 
-        for (z = 0; z < k; z++) {
-            t = 0.0;
-            for (j = mat->IRP[i]; j < limit; j++) {
-                t += mat->AS[j]*(x[mat->JA[j]*k+z]);
+        for (j = irp[i]; j < irp[i+1]; j++) {
+            for (z = 0; z < k; z++) {
+                t[z] += as[j]*(x[ja[j]*k+z]);
             }
-            y[i*k+z] = t;
         }
     }
 }
@@ -35,11 +33,10 @@ void serial_product_csr(CSR* mat, const double* x, int k, double* y){
  * @param t1 pointer to first timeval structure
  * @param t2 pointer to second timeval structure
  * */
-void serial_product_ell(ELL mat, const double* x, int k, double* y, struct timespec *t1, struct timespec *t2){
+void serial_product_ell(ELL mat, const double* x, int k, double* y){
     int i, j, z, maxnz = mat.MAXNZ;
     double t, val;
 
-    clock_gettime(CLOCK_MONOTONIC, t1);
     for (z = 0; z < k; z++) {
         for (i = 0; i < mat.M; i++) {
             t = 0.0;
@@ -55,5 +52,4 @@ void serial_product_ell(ELL mat, const double* x, int k, double* y, struct times
             y[i*k+z] = t;
         }
     }
-    clock_gettime(CLOCK_MONOTONIC, t2);
 }

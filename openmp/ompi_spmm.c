@@ -7,47 +7,32 @@
  * - X is a multivector with given k columns
  * */
 
-void csr_load_balancing(int size, CSR* csr,
-                        int **ma, int **nza, int **nz_disp, int **m_disp, int **lnz_a){
-
+void csr_load_balancing(int size, CSR* csr, int *ma, int *nza, int *nz_disp, int *m_disp){
     int m = csr->M;
     int nz = csr->NZ;
-    int* irp = csr->IRP;
+    int *irp = csr->IRP;
+    int *nz_start = nz_balancing(size, nz, irp, m);
 
-    int *nz_start = nz_balancing(size, csr->NZ, irp, csr->M);
-
-    *lnz_a = (int*) malloc(size*sizeof(int));
-    *ma = (int*)malloc(size*sizeof(int));
-    *m_disp = (int*)malloc(size*sizeof(int));
-    *nza = (int*)malloc(size*sizeof(int));
-    *nz_disp = (int*)malloc(size*sizeof(int));
-    malloc_handler(5, (void*[]){*lnz_a, *ma, *m_disp, *nza, *nz_disp});
-
-    int i, first_nz, last_nz, start_row, end_row;
-    for(i=0; i<size; i++){
+    int first_nz, start_row, end_row;
+    for(int i = 0; i < size; i++){
         start_row = nz_start[i];
         end_row = nz_start[i + 1];
-
         first_nz = irp[start_row];
 
         if (i == size-1) {
-            (*ma)[i] = m-start_row;
-            last_nz = nz;
-            (*lnz_a)[i] = nz;
+            ma[i] = m - start_row;
         } else {
-            (*ma)[i] = end_row - start_row; // local number of rows
-            last_nz = irp[end_row];
-            (*lnz_a)[i] = irp[(*ma)[i]];
+            ma[i] = end_row - start_row; // local number of rows
         }
 
-        (*nza)[i] = last_nz - first_nz; // local number non-zeros
+        nza[i] = irp[end_row] - first_nz; // local number non-zeros
 
         if (i == 0) {
-            (*nz_disp)[i] = 0;
-            (*m_disp)[i] = 0;
+            nz_disp[i] = 0;
+            m_disp[i] = 0;
         }else{
-            (*nz_disp)[i] = (*nza)[i-1];
-            (*m_disp)[i] = (*ma)[i-1];
+            nz_disp[i] = nza[i-1];
+            m_disp[i] = ma[i-2];
         }
     }
 
@@ -63,21 +48,27 @@ void csr_load_balancing(int size, CSR* csr,
  * @param k number of columns of x
  * @param y receives product results Mxk stored as 1D array
  * */
-void product_csr(CSR* csr, int last_nz, const double* x, int k, double* y){
-    int j, z, first, last, start = csr->IRP[0], rows = csr->M;
+void product_csr(CSR* csr, int threads, const double* x, int k, double* y){
+    int rows = csr->M;
+    int *irp = csr->IRP;
+    int *ja = csr->JA;
+    double *as = csr->AS;
+
+    int j, z, first, last, start = irp[0];
     double temp;
 
-    #pragma omp parallel for private(j, z, temp, first, last) shared(csr, k, y, rows, start, last_nz, x) default(none)
+    #pragma omp parallel for num_threads(threads) private(j, z, temp, first, last) \
+                                                  shared(rows, irp, start, k, as, x, ja, y) \
+                                                  default(none)
     for (int i = 0; i < rows; i++) {
-        first = csr->IRP[i] - start;
-        last = (i == rows-1) ? last_nz : csr->IRP[i+1];
-        last -= start;
+        first = irp[i] - start;
+        last = irp[i+1] - start;
 
         for (z = 0; z < k; z++) {
             temp = 0.0;
 
             for (j = first; j < last; j++) {
-                temp += csr->AS[j]*(x[csr->JA[j]*k+z]);
+                temp += as[j]*(x[ja[j]*k+z]);
             }
 
             y[i*k+z] = temp;
@@ -123,16 +114,12 @@ int main(int argc, char** argv) {
 
     MM_typecode t;
     FILE *f;
-
     CSR *csr;
     ELL *ell;
-
-    long time;
-    double gflops_s, gflops_p, abs_err, rel_err;
-    double *x, *y_s, *y_p;
+    double gflops_s, gflops_p, abs_err, rel_err, *x, *y_s, *y_p;
     int rank, size;
     int k, num_threads;
-    int n, nz, *irp, *ja;
+    int m, n, nz, *irp, *ja, flop;
     double *as;
     struct timespec t1, t2;
 
@@ -160,6 +147,7 @@ int main(int argc, char** argv) {
     #endif
 #else
         csr = read_mm_csr(f, t);
+        m = csr->M;
         n = csr->N;
         nz = csr->NZ;
         irp = csr->IRP;
@@ -169,11 +157,23 @@ int main(int argc, char** argv) {
         print_csr(csr);
     #endif
 #endif
-
         fclose(f);
+
+        flop = 2*k*nz;
+        alloc_struct(&y_s, m, k);
+
+        // ---------------------------------------------- Serial SpMM ---------------------------------------------- //
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+#ifdef ELLPACK
+        serial_product_ell(ell, x, k, y_s);
+#else
+        serial_product_csr(csr, x, k, y_s);
+#endif
+        clock_gettime(CLOCK_MONOTONIC, &t2);
+        gflops_s = get_gflops(t1, t2, flop);
     }
 
-    //---------------------------------- Broadcasting
+    //------------------------------------------- Communication ------------------------------------------- //
     MPI_Bcast(&n, 1, MPI_INT, 0, comm);
     MPI_Bcast(&k, 1, MPI_INT, 0, comm);
     MPI_Bcast(&nz, 1, MPI_INT, 0, comm);
@@ -185,30 +185,34 @@ int main(int argc, char** argv) {
 #ifdef ELLPACK
     //TODO
 #else
+    int *ma, *nza, *nz_disp, *m_disp;
+    if(rank == 0) {
+        ma = (int*)malloc(size*sizeof(int));
+        m_disp = (int*)malloc(size*sizeof(int));
+        nza = (int*)malloc(size*sizeof(int));
+        nz_disp = (int*)malloc(size*sizeof(int));
+        malloc_handler(5, (void*[]){ma, m_disp, nza, nz_disp});
 
-    int *ma, *nza, *lnz_a, *nz_disp, *m_disp;
-    if(rank == 0) csr_load_balancing(size, csr, &ma, &nza, &nz_disp, &m_disp, &lnz_a);
+        csr_load_balancing(size, csr, ma, nza, nz_disp, m_disp);
+    }
 
-    int l_m, l_nz, last_nz, *l_irp, *l_ja;
-    double *l_as;
+    int l_m, l_nz;
 
-    //--------------------------------------------- Scattering
     MPI_Scatter(ma, 1, MPI_INT, &l_m, 1, MPI_INT, 0, comm); // scatter local number of rows per process
     MPI_Scatter(nza, 1, MPI_INT, &l_nz, 1, MPI_INT, 0, comm); // scatter local number of nz per process
-    MPI_Scatter(lnz_a, 1, MPI_INT, &last_nz, 1, MPI_INT, 0, comm); // scatter last nz to compute per process
 
-    l_irp = (int*)malloc(l_m * sizeof(int));
-    l_ja = (int*)malloc(l_nz * sizeof(int));
-    l_as = (double*)malloc(l_nz * sizeof(double));
+    int* l_irp = (int*)malloc((l_m+1) * sizeof(int));
+    int* l_ja = (int*)malloc(l_nz * sizeof(int));
+    double* l_as = (double*)malloc(l_nz * sizeof(double));
     malloc_handler(3, (void*[]){l_irp, l_ja, l_as});
 
-    MPI_Scatterv(irp, ma, m_disp, MPI_INT, l_irp, l_m, MPI_INT, 0, comm); // scatter irp portion per process
+    MPI_Scatterv(irp, ma, m_disp, MPI_INT, l_irp, l_m+1, MPI_INT, 0, comm); // scatter irp portion per process
     MPI_Scatterv(ja, nza, nz_disp, MPI_INT, l_ja, l_nz, MPI_INT, 0, comm); // scatter ja portion per process
     MPI_Scatterv(as, nza, nz_disp, MPI_DOUBLE, l_as, l_nz, MPI_DOUBLE, 0, comm); // scatter as portion per process
 
-    if (rank == 0) clean_up(3, (void*[]){nza, nz_disp, lnz_a});
+    if (rank == 0) clean_up(3, (void*[]){nza, nz_disp});
 
-    //--------------------------------------- Prepare multiplication
+    //--------------------------------------- MPI+OpenMP SpMM ----------------------------------------------- //
     alloc_struct(&y_p, l_m, k);
     CSR* l_csr = (CSR*) malloc(sizeof(CSR));
     l_csr->M = l_m;
@@ -219,23 +223,11 @@ int main(int argc, char** argv) {
 
     MPI_Barrier(comm);
     if (rank == 0) clock_gettime(CLOCK_MONOTONIC, &t1);
-
-    product_csr(l_csr, last_nz, x, k, y_p);
-
+    product_csr(l_csr, num_threads, x, k, y_p);
     MPI_Barrier(comm);
     if (rank == 0) {
         clock_gettime(CLOCK_MONOTONIC, &t2);
-        time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
-        gflops_p = get_gflops(time, k, nz);
-
-        alloc_struct(&y_s, csr->M, k);
-
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        serial_product_csr(csr, x, k, y_s);
-        clock_gettime(CLOCK_MONOTONIC, &t2);
-
-        time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
-        gflops_s = get_gflops(time, k, nz);
+        gflops_p = get_gflops(t1, t2, flop);
     }
 
     // CSR local cleanup

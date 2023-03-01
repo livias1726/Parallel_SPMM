@@ -1,43 +1,109 @@
-#include <iostream>
+#include "cu_utils.cuh"
 
-#include <cuda_runtime.h>
-#include <helper_cuda.h>
-#include <helper_timer.h>
-#include "cu_utils.h"
+/*
+__device__ void product_csr_stream(int* irp, int* ja, double* as, int start, int end, int idx, const double* x,
+                                   double* y){
+    int fc = irp[start];
+    int nz = irp[end] - fc;
 
-// Simple 1-D thread block
-#define BD 256
+    __shared__ volatile double LDS[BD];
 
-const dim3 BLOCK_DIM(BD);
+    // each thread writes to shared memory
+    if (idx < nz){
+        LDS[idx] = as[fc + idx] * x[ja[fc + idx]];
+    }
+    __syncthreads();
 
-// GPU implementation of matrix_vector product using a block of threads for each row.
-__global__ void gpuProductCsr(int rows, int cols, const float* A, const float* x, float* y) {
-    // use of shared memory
-    extern __shared__ float shared_row[];
+    // threads that fall within a range sum up the partial results
+    int k, j;
+    for (k = start + idx; k < end; k += blockDim.x){
+        double temp = 0.0;
 
-    unsigned int row = blockIdx.x;
-    if (row < rows) { // which row is the current block supposed to act upon?
-
-        // each thread processes the elements at indexes with period tid
-        unsigned int tid = threadIdx.x;
-        shared_row[tid] = 0.0;
-        for (unsigned int i = tid; i < cols; i += blockDim.x) {
-            shared_row[tid] += A[row*cols + i] * x[i];
+        for (j = (irp[k] - fc); j < (irp[k + 1] - fc); j++){
+            temp = temp + LDS[j];
         }
+        y[k] = temp;
+    }
+}
+ */
+
+ /**
+  * VECTOR KERNEL: 1 warp per matrix row
+  *     - A warp-wide parallel reduction is required to sum the per-thread results together
+  *     - Accesses JA and AS contiguously
+  *     - Memory access labeled by warp index
+  *     - If rows don't have more than 32 NZs each, then no warp iterates more than once on the CSR arrays.
+  *       Else, the order of summation differs from the scalar kernel
+  * Problems: efficient execution demands a number of NZs per row greater than 32 (warpSize)
+  * */
+ /*
+__device__ void product_csr_vector(int* irp, int* ja, double* as, int start, int end, int idx, const double* x,
+                                   double* y){
+    // tid in warp
+    int rs = irp[start];
+    int re = irp[end];
+
+    double sum = 0.0;
+
+    __shared__ volatile double LDS[BD];
+
+    // use all threads in a warp to accumulate multiplied elements
+    for (int j = rs + idx; j < re; j += BD){
+        int col = ja[j];
+        sum += as[j] * x[col];
+    }
+
+    LDS[idx] = sum;
+    __syncthreads();
+
+    // Reduce partial sums
+    for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
         __syncthreads();
+        if (idx < stride) LDS[idx] += LDS[idx + stride];
+    }
 
-        // implementation of a reduction operation (V3)
-        for(unsigned int s=blockDim.x>>1; s>0; s>>=1) {
-            if (tid < s) {
-                shared_row[tid] += shared_row[tid + s];
-            }
-            __syncthreads();
+    // write result
+    if (idx == 0) y[start] = LDS[idx];
+}
+  */
+
+/*
+__global__ void product_csr_adaptive(CSR* csr, int* blocks, const double* x, double* y) {
+    int start = blocks[blockIdx.x];
+    int end = blocks[blockIdx.x + 1];
+
+    int rows = end - start;
+    int idx = threadIdx.x;
+
+    if (rows > 1) {
+        product_csr_stream(csr->IRP, csr->JA, csr->AS, start, end, idx, x, y);
+    } else {
+        product_csr_vector(csr->IRP, csr->JA, csr->AS, start, end, idx, x, y);
+    }
+}
+ */
+
+/**
+ * SCALAR KERNEL: 1 thread per matrix row
+ * Problems: Thread divergence
+ *      - JA and AS not accessed simultaneously
+ *      - If the distribution of NZs per row is highly variable (follows a power law),
+ *        many threads within a warp will remain idle while waiting for the thread with the longest row.
+ * */
+__global__ void product_csr_scalar(const int rows, const int *irp, const int *ja, const double *as,
+                                   const double *x, const int k, double *y){
+    int row = blockDim.x * blockIdx.x + threadIdx.x;
+    if (row < rows){
+        double temp = 0.0;
+        int row_start = irp[row];
+        int row_end = irp[row+1];
+
+        for(int z = 0; z < k; z++){
+            for (int j = row_start; j < row_end; j ++)
+                temp += as[j] * x[ja[j]*k + z];
         }
 
-        // write result for this block to global mem
-        if (tid == 0) {
-            y[row] = shared_row[0];
-        }
+        y[row] += temp;
     }
 }
 
@@ -45,11 +111,15 @@ int main(int argc, char** argv) {
 
     MM_typecode t;
     FILE *f;
-    CSR* csr;
-    ELL* ell;
+    CSR *csr;
+    //ELL *ell, *d_ell;
     double gflops_s, gflops_p, abs_err, rel_err;
-    double *x, *y_s, *y_p;
-    int k, m, n, nz;
+    double *x, *y_s, *y_p, *d_x, *d_y;
+    int k, m, n, nz, flop;
+    int *d_irp, *d_ja;
+    double *d_as;
+
+    // ----------------------- Set Up ------------------------------------------- //
 
     process_arguments(argc, argv, &f, &k);
     process_mm(&t, f);
@@ -67,7 +137,6 @@ int main(int argc, char** argv) {
     print_ell(ell);
     #endif
 
-    ELL *d_ell;
     checkCudaErrors(cudaMalloc((void**) &d_ell, sizeof(ELL)));
     checkCudaErrors(cudaMemcpy(d_ell, ell, sizeof(ELL), cudaMemcpyHostToDevice));
 #else
@@ -80,12 +149,12 @@ int main(int argc, char** argv) {
     print_csr(csr);
     #endif
 
-    CSR *d_csr;
-    checkCudaErrors(cudaMalloc((void**) &d_csr, sizeof(CSR)));
-    checkCudaErrors(cudaMemcpy(d_csr, csr, sizeof(CSR), cudaMemcpyHostToDevice));
+    allocCudaCsr(csr, &d_irp, &d_ja, &d_as);
 #endif
 
     fclose(f);
+
+    flop = 2*k*nz;
 
     alloc_struct(&x, n, k);
     alloc_struct(&y_s, m ,k);
@@ -93,19 +162,13 @@ int main(int argc, char** argv) {
 
     populate_multivector(x, n, k);
 
-#ifdef AUDIT
+#ifdef DEBUG
     // print results
     print_matrix(x, n, k, "\nMultivector:\n");
 #endif
 
-    double *d_x, *d_y;
-    checkCudaErrors(cudaMalloc((void**) &d_x, n * k * sizeof(double)));
-    checkCudaErrors(cudaMalloc((void**) &d_y, m * k * sizeof(double)));
+    allocCudaSpmm(&d_x, &d_y, x, m, n, k);
 
-    checkCudaErrors(cudaMemcpy(d_x, x,  n * k * sizeof(double), cudaMemcpyHostToDevice));
-
-
-    // CUDA SDK timer
     StopWatchInterface* timer = 0;
     sdkCreateTimer(&timer);
 
@@ -118,21 +181,26 @@ int main(int argc, char** argv) {
 #endif
     timer->stop();
 
-    gflops_s = get_gflops((timer->getTime())*1.e6, k, nz);
+    gflops_s = (double)flop/((timer->getTime())*1.e6);
 
     // ------------------------ Product on the GPU ------------------------- //
-    // TODO: compute the dimension of the grid of blocks (1D) needed to cover all entries in the matrix and output vector
-    const dim3 GRID_DIM(((nrows*ncols)+BD - 1)/BD);
-    const int shmem_size = BD*sizeof(float);
+#ifdef ELLPACK
+    //TODO
+#else
+    // compute row blocks
+    int *d_blocks, *blocks = (int*)malloc(m*sizeof(int));
+    int num_blocks = csr_adaptive_blocks(m, csr->IRP, blocks);
+    checkCudaErrors(cudaMalloc((void**) &d_blocks, num_blocks*sizeof(int)));
+    checkCudaErrors(cudaMemcpy(d_blocks, blocks, num_blocks*sizeof(int), cudaMemcpyHostToDevice));
 
     timer->start();
-    gpuProductCsr<<<GRID_DIM, BLOCK_DIM, shmem_size>>>(nrows, ncols, d_A, d_x, d_y);
+    product_csr_scalar<<<num_blocks-1,BD>>>(m, d_irp, d_ja, d_as, d_x, k, d_y);
+    //product_csr_adaptive<<<num_blocks-1, BD>>>(d_csr, d_blocks, d_x, d_y);
     checkCudaErrors(cudaDeviceSynchronize());
     timer->stop();
+#endif
 
-    gflops_p = get_gflops((timer->getTime())*1.e6, k, nz);
-
-    // get the resulting vector d_y from the device and store it in y
+    gflops_p = (double)flop/((timer->getTime())*1.e6);
     checkCudaErrors(cudaMemcpy(y_p, d_y, m * k * sizeof(double), cudaMemcpyDeviceToHost));
 
     // check results
@@ -146,10 +214,13 @@ int main(int argc, char** argv) {
     checkCudaErrors(cudaFree(d_ell));
     delete[] ell;
 #else
-    checkCudaErrors(cudaFree(d_csr));
+    checkCudaErrors(cudaFree(d_irp));
+    checkCudaErrors(cudaFree(d_ja));
+    checkCudaErrors(cudaFree(d_as));
     delete[] csr;
 #endif
 
+    checkCudaErrors(cudaFree(d_blocks));
     checkCudaErrors(cudaFree(d_x));
     checkCudaErrors(cudaFree(d_y));
 

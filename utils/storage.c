@@ -78,12 +78,91 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: c
     return elems;
 }
 
+/**
+ * Read the matrix into a CSR struct representing the matrix in CSR storage format
+ *
+ * @param f file descriptor
+ * @param t matrix type code
+ * */
+CSR* read_mm_csr(FILE* f, MM_typecode t){
+    int i, m, n, nz, elem_count = 0;
+    Elem *curr, *prev;
+
+    // read matrix from file
+    Elem** elems = read_mm(f, &m, &n, &nz, t);
+    // alloc memory
+    CSR* mat = alloc_csr(m, n, nz);
+
+    // scan the array of lists: 1 per row
+    for (i = 0; i < m; i++){
+        curr = elems[i];
+
+        // skip empty rows
+        if (curr == NULL) { continue; }
+
+        // update rows pointers
+        mat->IRP[i] = elem_count;
+
+        // scan elements of i-th row and dealloc memory
+        while (curr != NULL) {
+            mat->AS[elem_count] = curr->val;
+            mat->JA[elem_count] = curr->j;
+
+            prev = curr;
+            curr = curr->next;
+            free(prev);
+            elem_count++;
+        }
+    }
+
+    free(elems);
+    return mat;
+}
+
+/**
+ * Read the matrix into a ELL struct representing the matrix in ELLPACK storage format
+ *
+ * @param f file descriptor
+ * @param t matrix type code
+ * */
+ELL* read_mm_ell(FILE* f, MM_typecode t){
+    int i, m, n, nz, maxnz, count = 0;
+    Elem *curr, *prev;
+
+    // read matrix from file
+    Elem** elems = read_mm(f, &m, &n, &nz, t);
+    // alloc memory
+    ELL* mat = alloc_ell(elems, m, n, nz, &maxnz);
+
+    // scan the array of lists: 1 per row
+    for (i = 0; i < m; i++){
+        curr = elems[i];
+
+        // scan elements of i-th row and dealloc memory
+        while (curr != NULL) {
+            mat->JA[i*maxnz + count] = curr->j;
+            mat->AS[i*maxnz + count] = curr->val;
+
+            prev = curr;
+            curr = curr->next;
+            free(prev);
+
+            count++;
+        }
+
+        count = 0;
+    }
+
+    free(elems);
+    return mat;
+}
+
 CSR* alloc_csr(int m, int n, int nz){
     // alloc memory
     CSR* mat = (CSR*) malloc(sizeof(CSR));
     malloc_handler(1, (void* []) {mat});
 
-    mat->IRP = (int*)malloc(m*sizeof(int));
+    mat->IRP = (int*)malloc((m+1)*sizeof(int));
     mat->JA = (int*)malloc(nz*sizeof(int));
     mat->AS = (double*)malloc(nz*sizeof(double));
     malloc_handler(3, (void* []) {mat->IRP, mat->JA, mat->AS});

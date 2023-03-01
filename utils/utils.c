@@ -24,7 +24,7 @@ void populate_multivector(double* vec1, int rows, int cols) {
 }
 
 void alloc_struct(double** vec, int rows, int cols) {
-    *vec = (double*) malloc(rows*cols* sizeof(double));
+    *vec = (double*) calloc(rows*cols, sizeof(double));
     malloc_handler(1, (void*[]){*vec});
 }
 

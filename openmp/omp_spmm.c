@@ -1,9 +1,9 @@
 #include "omp_utils.h"
 
 /**
- * omp_spmm performs an OpenMP multithreaded version of a matrix-multivector multiplication Y <- AX where
- * - A is a sparse matrix
- * - X is a multivector with given k columns
+ * OpenMP version of a matrix-multivector multiplication Y <- AX where
+ * - A is a MxN sparse matrix
+ * - X is a Nxk dense multivector
  * */
 
 //---------------------------------------------------------------------------------------------------Product
@@ -11,30 +11,51 @@
  * Computes the product with A stored in a CSR format
  *
  * @param mat matrix in csr format
- * @param nz_start array of starting row indices for each thread
+ * @param rows_load balanced load of rows per thread (wrt the number of non-zeros to process)
  * @param x multivector Nxk stored as 1D array
  * @param k number of columns of x
  * @param y receives product results Mxk stored as 1D array
  * */
-void product_csr(CSR mat, const int* nz_start, int num_threads, const double* x, int k, double* y){
-    int rows = mat.M;
+ //TODO: try to parallelize the iteration on x --> each thread has a block of y (rows_load x cols_load)
+ // --> cols_load will be the columns of x that the thread has to manage
+void product_csr(CSR *mat, const int* rows_load, int threads, const double* x, int k, double* y){
 
-    #pragma omp parallel for num_threads(num_threads) shared(nz_start,num_threads,k,y,mat,rows, x) default(none)
-    for (int tid = 0; tid < num_threads; tid++) {
-        int limit, z, j;
-        double temp;
+    int *irp = mat->IRP, *ja = mat->JA;
+    double *as = mat->AS;
 
-        for (int i = nz_start[tid]; i < nz_start[tid+1]; i++) {
-            limit = (i != rows-1) ? mat.IRP[i+1] : mat.NZ;
+    int z;
+    #pragma omp parallel for num_threads(threads) private(z) shared(threads, rows_load, irp, k, as, ja, x, y) default(none)
+    for (int tid = 0; tid < threads; tid++) {
+        int i, j, x_i;
+        double *temp, a_j;
 
-            for (z = 0; z < k; z++) {
-                temp = 0.0;
+        for (i = rows_load[tid]; i < rows_load[tid + 1]; i++) { // get the specific A's row to process
+            temp = &y[i*k]; //the respective Y's row to accumulate products on
 
-                for (j = mat.IRP[i]; j < limit; j++) {
-                    temp += mat.AS[j]*(x[mat.JA[j]*k+z]);
+            for (j = irp[i]; j < irp[i+1]; j++) { // iterate over the nz values in the row
+                // load just once
+                x_i = ja[j]*k; //the respective X's row index
+                a_j = as[j]; //the respective NZ value
+
+                // Loop unrolling
+                if (k % 4 == 0) { // avoids to process values like '12' with a 3-level loop unroll
+                    for (z = 0; z < k; z += 4) {
+                        temp[z] += a_j*(x[x_i+z]);
+                        temp[z+1] += a_j*(x[x_i+(z+1)]);
+                        temp[z+2] += a_j*(x[x_i+(z+2)]);
+                        temp[z+3] += a_j*(x[x_i+(z+3)]);
+                    }
+                } else if (k % 3 == 0) {
+                    for (z = 0; z < k; z += 3) {
+                        temp[z] += a_j*(x[x_i+z]);
+                        temp[z+1] += a_j*(x[x_i+(z+1)]);
+                        temp[z+2] += a_j*(x[x_i+(z+2)]);
+                    }
+                } else {
+                    for (z = 0; z < k; z++) {
+                        temp[z] += a_j*(x[x_i+z]);
+                    }
                 }
-
-                y[i*k+z] = temp;
             }
         }
     }
@@ -81,7 +102,6 @@ int main(int argc, char** argv) {
     FILE *f;
     CSR* csr;
     ELL* ell;
-    long time;
     double gflops_s, gflops_p, abs_err, rel_err, *x, *y_s, *y_p;
     int k, m, n, nz, num_threads;
     struct timespec t1, t2;
@@ -120,34 +140,40 @@ int main(int argc, char** argv) {
     print_matrix(x, n, k, "\nMultivector:\n");
 #endif
 
-    // compute the product
-#ifdef ELLPACK
-    serial_product_ell(*ell, x, k, y_s, &t1, &t2);
-    time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
-    gflops_s = get_gflops(time, k, nz);
+    double flop = (double)2*k*nz;
 
-    //TODO: optimize ell prod
+    // ----------------------------------- Serial SpMM -------------------------------------------- //
+
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+#ifdef ELLPACK
+    serial_product_ell(*ell, x, k, y_s);
+#else
+    serial_product_csr(csr, x, k, y_s);
+#endif
+    clock_gettime(CLOCK_MONOTONIC, &t2);
+    gflops_s = get_gflops(t1, t2, flop);
+
+    // -------------------------------------------- OpenMP SpMM ---------------------------------------------- //
+#ifdef ELLPACK
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+
+    //TODO
     product_ell(*ell, x, k, y_p, &t1, &t2);
-    time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
-    gflops_p = get_gflops(time, k, nz);
+
+    clock_gettime(CLOCK_MONOTONIC, &t2);
+    gflops_p = get_gflops(t1, t2, flop);
 
     free(ell);
 #else
-    clock_gettime(CLOCK_MONOTONIC, &t1);
-    serial_product_csr(*csr, x, k, y_s);
-    clock_gettime(CLOCK_MONOTONIC, &t2);
-
-    time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
-    gflops_s = get_gflops(time, k, nz);
-
     int* rows_idx = nz_balancing(num_threads, nz, csr->IRP, csr->M);
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
-    product_csr(*csr, rows_idx, num_threads, x, k, y_p);
+
+    product_csr(csr, rows_idx, num_threads, x, k, y_p);
+
     clock_gettime(CLOCK_MONOTONIC, &t2);
 
-    time = get_elapsed_nano(t1.tv_sec, t1.tv_nsec, t2.tv_sec, t2.tv_nsec);
-    gflops_p = get_gflops(time, k, nz);
+    gflops_p = get_gflops(t1, t2, flop);
 
     free(rows_idx);
     free(csr);
