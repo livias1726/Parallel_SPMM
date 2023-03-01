@@ -16,15 +16,15 @@
  * @param k number of columns of x
  * @param y receives product results Mxk stored as 1D array
  * */
- //TODO: try to parallelize the iteration on x --> each thread has a block of y (rows_load x cols_load)
- // --> cols_load will be the columns of x that the thread has to manage
+//TODO: try to parallelize the iteration on x --> each thread has a block of y (rows_load x cols_load)
+// --> cols_load will be the columns of x that the thread has to manage
 void product_csr(CSR *mat, const int* rows_load, int threads, const double* x, int k, double* y){
 
     int *irp = mat->IRP, *ja = mat->JA;
     double *as = mat->AS;
 
     int z;
-    #pragma omp parallel for num_threads(threads) private(z) shared(threads, rows_load, irp, k, as, ja, x, y) default(none)
+#pragma omp parallel for num_threads(threads) private(z) shared(threads, rows_load, irp, k, as, ja, x, y) default(none)
     for (int tid = 0; tid < threads; tid++) {
         int i, j, x_i;
         double *temp, a_j;
@@ -76,7 +76,7 @@ void product_ell(ELL mat, const double* x, int k, double* y, struct timespec *t1
 
     clock_gettime(CLOCK_MONOTONIC, t1);
     // TODO: version 1 -> to be optimized
-    #pragma omp parallel for schedule(guided) shared(k, maxnz, x, mat, y) private(z, t, j, val) default(none)
+#pragma omp parallel for schedule(guided) shared(k, maxnz, x, mat, y) private(z, t, j, val) default(none)
     for (i = 0; i < mat.M; i++) {
         for (z = 0; z < k; z++) { //TODO: check order of loops
             t = 0.0;
@@ -123,9 +123,9 @@ int main(int argc, char** argv) {
     m = csr->M;
     n = csr->N;
     nz = csr->NZ;
-    #ifdef DEBUG
+#ifdef DEBUG
     print_csr(csr);
-    #endif
+#endif
 #endif
     fclose(f);
 
@@ -204,4 +204,4 @@ int main(int argc, char** argv) {
 #endif
 
     return 0;
-} 
+}
