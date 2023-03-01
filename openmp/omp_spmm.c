@@ -18,7 +18,7 @@
  * */
 //TODO: try to parallelize the iteration on x --> each thread has a block of y (rows_load x cols_load)
 // --> cols_load will be the columns of x that the thread has to manage
-void product_csr(CSR *mat, const int* rows_load, int threads, const double* x, int k, double* y){
+void product_csr(CSR *mat, const int* rows_load, int threads, double* x, int k, double* y){
 
     int *irp = mat->IRP, *ja = mat->JA;
     double *as = mat->AS;
@@ -26,34 +26,34 @@ void product_csr(CSR *mat, const int* rows_load, int threads, const double* x, i
     int z;
 #pragma omp parallel for num_threads(threads) private(z) shared(threads, rows_load, irp, k, as, ja, x, y) default(none)
     for (int tid = 0; tid < threads; tid++) {
-        int i, j, x_i;
-        double *temp, a_j;
+        int i, j;
+        double *row_tmp, *col_tmp, a_j;
 
         for (i = rows_load[tid]; i < rows_load[tid + 1]; i++) { // get the specific A's row to process
-            temp = &y[i*k]; //the respective Y's row to accumulate products on
+            row_tmp = &y[i * k]; //the respective Y's row to accumulate products on
 
             for (j = irp[i]; j < irp[i+1]; j++) { // iterate over the nz values in the row
                 // load just once
-                x_i = ja[j]*k; //the respective X's row index
+                col_tmp = &x[ja[j]*k]; //the respective X's row index
                 a_j = as[j]; //the respective NZ value
 
                 // Loop unrolling
                 if (k % 4 == 0) { // avoids to process values like '12' with a 3-level loop unroll
                     for (z = 0; z < k; z += 4) {
-                        temp[z] += a_j*(x[x_i+z]);
-                        temp[z+1] += a_j*(x[x_i+(z+1)]);
-                        temp[z+2] += a_j*(x[x_i+(z+2)]);
-                        temp[z+3] += a_j*(x[x_i+(z+3)]);
+                        row_tmp[z] += a_j * col_tmp[z];
+                        row_tmp[z+1] += a_j * col_tmp[z+1];
+                        row_tmp[z+2] += a_j * col_tmp[z+2];
+                        row_tmp[z+3] += a_j * col_tmp[z+3];
                     }
                 } else if (k % 3 == 0) {
                     for (z = 0; z < k; z += 3) {
-                        temp[z] += a_j*(x[x_i+z]);
-                        temp[z+1] += a_j*(x[x_i+(z+1)]);
-                        temp[z+2] += a_j*(x[x_i+(z+2)]);
+                        row_tmp[z] += a_j * col_tmp[z];
+                        row_tmp[z+1] += a_j * col_tmp[z+1];
+                        row_tmp[z+2] += a_j * col_tmp[z+2];
                     }
                 } else {
                     for (z = 0; z < k; z++) {
-                        temp[z] += a_j*(x[x_i+z]);
+                        row_tmp[z] += a_j * col_tmp[z];
                     }
                 }
             }
@@ -109,9 +109,14 @@ int main(int argc, char** argv) {
     process_arguments(argc, argv, &f, &k, &num_threads);
     process_mm(&t, f);
 
+    // read matrix from file
+    Elem** elems = read_mm(f, &m, &n, &nz, t);
+    fclose(f);
+
     // convert to wanted storage format
 #ifdef ELLPACK
-    ell = read_mm_ell(f, t);
+    //TODO: manage H-Ellpack
+    ell = read_mm_ell(elems, m, n, nz);
     m = ell->M;
     n = ell->N;
     nz = ell->NZ;
@@ -119,15 +124,14 @@ int main(int argc, char** argv) {
     print_ell(ell);
     #endif
 #else
-    csr = read_mm_csr(f, t);
+    csr = read_mm_csr(elems, m, n, nz);
     m = csr->M;
     n = csr->N;
     nz = csr->NZ;
-#ifdef DEBUG
+    #ifdef DEBUG
     print_csr(csr);
+    #endif
 #endif
-#endif
-    fclose(f);
 
     alloc_struct(&x, n, k);
     alloc_struct(&y_s, m ,k);

@@ -12,6 +12,7 @@
     #define SCPA_PROJECT_UTILS_H
 #endif
 
+#define DELTA_HELL
 #define get_gflops(t1, t2, flop) ( flop / ((t2.tv_sec - t1.tv_sec) * 1.e9 + (t2.tv_nsec - t1.tv_nsec)) )
 
 /**
@@ -69,10 +70,15 @@ typedef struct ell {
     double* AS;
 } ELL;
 
+typedef struct hell {
+    int dim; // dimension of hacks array
+    ELL** hacks; // array of ELL pointers
+} HELL;
+
 //-------------------------------------------------Functions signatures
 Elem** read_mm(FILE*, int*, int*, int*, const MM_typecode);
-CSR* read_mm_csr(FILE*, MM_typecode);
-ELL* read_mm_ell(FILE*, MM_typecode);
+CSR* read_mm_csr(Elem** elems, int m, int n, int nz);
+ELL* read_mm_ell(Elem** elems, int m, int n, int nz);
 CSR* alloc_csr(int, int, int);
 ELL* alloc_ell(Elem** elems, int, int, int, int*);
 

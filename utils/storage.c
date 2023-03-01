@@ -80,16 +80,11 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: c
 
 /**
  * Read the matrix into a CSR struct representing the matrix in CSR storage format
- *
- * @param f file descriptor
- * @param t matrix type code
  * */
-CSR* read_mm_csr(FILE* f, MM_typecode t){
-    int i, m, n, nz, elem_count = 0;
+CSR* read_mm_csr(Elem** elems, int m, int n, int nz){
+    int i, elem_count = 0;
     Elem *curr, *prev;
 
-    // read matrix from file
-    Elem** elems = read_mm(f, &m, &n, &nz, t);
     // alloc memory
     CSR* mat = alloc_csr(m, n, nz);
 
@@ -115,22 +110,19 @@ CSR* read_mm_csr(FILE* f, MM_typecode t){
         }
     }
 
+    mat->IRP[m] = nz;
+
     free(elems);
     return mat;
 }
 
 /**
  * Read the matrix into a ELL struct representing the matrix in ELLPACK storage format
- *
- * @param f file descriptor
- * @param t matrix type code
  * */
-ELL* read_mm_ell(FILE* f, MM_typecode t){
-    int i, m, n, nz, maxnz, count = 0;
+ELL* read_mm_ell(Elem** elems, int m, int n, int nz){
+    int i, maxnz, count = 0;
     Elem *curr, *prev;
 
-    // read matrix from file
-    Elem** elems = read_mm(f, &m, &n, &nz, t);
     // alloc memory
     ELL* mat = alloc_ell(elems, m, n, nz, &maxnz);
 
