@@ -8,33 +8,114 @@
  * */
 
 //--------------------------------------------------------------------------------------------------------------------//
-//TODO: fix bug on l_nz
-void csr_load_balancing(int size, CSR* csr, int *ma, int *nza, int *nz_disp, int *m_disp){
-    int m = csr->M;
-    int nz = csr->NZ;
-    int *irp = csr->IRP;
-    int *nz_start = nz_balancing(size, nz, irp, m);
+void broadcasting(MPI_Comm comm, int rank, int *n, int *k, double **x){
+    MPI_Bcast(n, 1, MPI_INT, 0, comm);
+    MPI_Bcast(k, 1, MPI_INT, 0, comm);
+    alloc_struct(x, *n, *k);
+    if (rank == 0) populate_multivector(*x, *n, *k);
+    MPI_Bcast(*x, (*n) * (*k), MPI_DOUBLE, 0, comm);
+}
 
-    int start_row, end_row;
+void load_balancing_scatterv(int size, int *rows_load, int *o_irp, int m, int *ma, int *nza,
+                             int **irp, int **m_disp, int **nz_disp){
+
+    *irp = (int*)malloc((m+size)*sizeof(int)); // copy of IRP to simulate overlapping in scattering
+    *m_disp = (int*)malloc(size*sizeof(int)); // displacements to scatter 'ma'
+    *nz_disp = (int*)malloc(size*sizeof(int)); // displacements to scatter 'nza'
+    malloc_handler(3, (void*[]){*irp, *m_disp, *nz_disp});
+
+    int start_row, end_row, l_m, m_count = 0, j, count = 0;
+
     for(int i = 0; i < size; i++){
-        start_row = nz_start[i];
-        end_row = nz_start[i + 1];
+        start_row = rows_load[i];
+        end_row = rows_load[i + 1];
+        l_m = end_row - start_row;
 
-        ma[i] = end_row - start_row; // local number of rows
-        nza[i] = irp[end_row] - irp[start_row]; // local number non-zeros
+        ma[i] += 1;
 
         if (i == 0) {
-            nz_disp[i] = 0;
-            m_disp[i] = 0;
+            (*nz_disp)[i] = 0;
+            (*m_disp)[i] = 0;
         }else{
-            nz_disp[i] = nza[i-1];
-            m_disp[i] = ma[i-1];
+            (*nz_disp)[i] = (*nz_disp)[i-1] + nza[i-1];
+            (*m_disp)[i] = (*m_disp)[i-1] + ma[i-1];
         }
 
-        printf("m_disp[%d] = %d\n", i, ma[i-1]);
+        for (j = m_count; j <= m_count+l_m; j++) {
+            (*irp)[count] = o_irp[j];
+            count++;
+        }
+        m_count += l_m;
+    }
+}
+
+void load_balancing_scatter(int size, int *rows_load, int *irp, int **ma, int **nza){
+
+    *ma = (int*)malloc(size*sizeof(int)); // number of rows per process
+    *nza = (int*)malloc(size*sizeof(int)); // number of nz per process
+    malloc_handler(2, (void*[]){*ma, *nza});
+
+    int start_row, end_row;
+
+    for(int i = 0; i < size; i++){
+        start_row = rows_load[i];
+        end_row = rows_load[i + 1];
+
+        (*ma)[i] = end_row - start_row; // local number of rows
+        (*nza)[i] = irp[end_row] - irp[start_row]; // local number non-zeros
+    }
+}
+
+void csr_load_balancing(MPI_Comm comm, int size, int rank, CSR* csr, CSR** l_csr, int **ma){
+    // global params
+    int *irp, *ja;
+    double *as;
+    // local params
+    int l_m, l_nz, *l_irp, *l_ja;
+    double* l_as;
+
+    // Setup of arrays to scatter wrt the balancing of non-zeros among processes
+    int *nza, *nz_disp, *m_disp, *rows_load;
+    int m, *o_irp;
+
+    if(rank == 0) {
+        o_irp = csr->IRP; // original IRP: need to create a modified copy to simulate overlapping in MPI_Scatterv
+        m = csr->M;
+        ja = csr->JA;
+        as = csr->AS;
+
+        rows_load = nz_balancing(size, csr->NZ, o_irp, m);
+        load_balancing_scatter(size, rows_load, o_irp, ma, &nza);
     }
 
-    free(nz_start);
+    // Scattering
+    MPI_Scatter(*ma, 1, MPI_INT, &l_m, 1, MPI_INT, 0, comm); // scatter local number of rows per process
+    MPI_Scatter(nza, 1, MPI_INT, &l_nz, 1, MPI_INT, 0, comm); // scatter local number of nz per process
+
+    l_irp = (int*)malloc((l_m+1) * sizeof(int));
+    l_ja = (int*)malloc(l_nz * sizeof(int));
+    l_as = (double*)malloc(l_nz * sizeof(double));
+    malloc_handler(3, (void*[]){l_irp, l_ja, l_as});
+
+    if (rank == 0) load_balancing_scatterv(size, rows_load, o_irp, m, *ma, nza, &irp, &m_disp, &nz_disp);
+
+    MPI_Scatterv(irp, *ma, m_disp, MPI_INT, l_irp, l_m+1, MPI_INT, 0, comm); // scatter irp portion per process
+    MPI_Scatterv(ja, nza, nz_disp, MPI_INT, l_ja, l_nz, MPI_INT, 0, comm); // scatter ja portion per process
+    MPI_Scatterv(as, nza, nz_disp, MPI_DOUBLE, l_as, l_nz, MPI_DOUBLE, 0, comm); // scatter as portion per process
+
+    *l_csr = (CSR*) malloc(sizeof(CSR));
+    malloc_handler(1, (void*[]){*l_csr});
+    (*l_csr)->M = l_m;
+    (*l_csr)->NZ = l_nz;
+    (*l_csr)->IRP = l_irp;
+    (*l_csr)->JA = l_ja;
+    (*l_csr)->AS = l_as;
+
+    if (rank == 0) clean_up(5, (void*[]){rows_load, irp, nza, nz_disp, m_disp});
+}
+
+void ell_load_balancing(MPI_Comm comm, int size, int rank, ELL* ell, ELL** l_ell){
+    //TODO
 }
 
 //---------------------------------------------------------------------------------------------------Product
@@ -46,7 +127,7 @@ void csr_load_balancing(int size, CSR* csr, int *ma, int *nza, int *nz_disp, int
  * @param k number of columns of x
  * @param y receives product results Mxk stored as 1D array
  * */
-void product_csr(CSR* csr, int threads, double* x, int k, double* y){
+void product_csr(CSR* csr, int pid, int threads, double* x, int k, double* y){
 
     int rows = csr->M;
     int *irp = csr->IRP;
@@ -57,7 +138,7 @@ void product_csr(CSR* csr, int threads, double* x, int k, double* y){
     double *row_tmp, *col_tmp, a_j;
 
     #pragma omp parallel for num_threads(threads) private(j, z, row_tmp, col_tmp, a_j, first, last) \
-                                                  shared(rows, irp, start, k, as, x, ja, y) \
+                                                  shared(rows, irp, start, k, as, x, ja, y, pid) \
                                                   default(none)
     for (int i = 0; i < rows; i++) {
         first = irp[i] - start;
@@ -126,35 +207,54 @@ void product_ell(ELL mat, const double* x, int k, double* y, struct timespec *t1
     clock_gettime(CLOCK_MONOTONIC, t2);
 }
 
+double* gather_result(MPI_Comm comm, int size, int rank, double *y_p, int m, int k, int l_m, int *ma){
+    int *m_disp;
+    double *y_complete;
+
+    if(rank == 0) {
+        m_disp = (int*)malloc(size*sizeof(int));
+        y_complete = (double*) malloc(m * k * sizeof(double));
+        malloc_handler(2, (void*[]){m_disp, y_complete});
+
+        for (int i = 0; i < size; i++) {
+            ma[i] = (ma[i]-1)*k;
+            m_disp[i] = (i == 0) ? 0 : ma[i-1];
+        }
+    }
+
+    MPI_Gatherv(y_p, l_m*k, MPI_DOUBLE, y_complete, ma, m_disp, MPI_DOUBLE, 0, comm);
+
+    if(rank == 0) clean_up(2, (void*[]){ma, m_disp});
+
+    return y_complete;
+}
+
 //-----------------------------------------------------------------------------------------Main
 int main(int argc, char** argv) {
 
     MM_typecode t;
     FILE *f;
-    CSR *csr;
+    CSR *csr, *l_csr;
     ELL *ell;
     double flop, gflops_s, gflops_p, abs_err, rel_err, *x, *y_s, *y_p;
-    int rank, size;
-    int k, num_threads;
-    int m, n, nz, *irp, *ja;
-    double *as;
+    int rank, size, m, l_m, n, nz, k, num_threads;
     struct timespec t1, t2;
 
-    //---------------------------- MPI setup
+    //------------------------------------------------- MPI setup ----------------------------------------------------//
     MPI_Init(&argc, &argv);
 
     MPI_Comm comm = MPI_COMM_WORLD;
     MPI_Comm_size(comm, &size);
     MPI_Comm_rank(comm, &rank);
 
-    //-------------------------------- Computation setup by master process
+    //------------------------------------------ Setup by master process ---------------------------------------------//
     if (rank == 0) {
         // check the correct use of the program
         process_arguments(argc, argv, &f, &k, &num_threads);
         process_mm(&t, f);
 
         // read matrix from file
-        Elem** elems = read_mm(f, &m, &n, &nz, t);
+        Elem **elems = read_mm(f, &m, &n, &nz, t);
         fclose(f);
 
         // convert to wanted storage format
@@ -162,37 +262,28 @@ int main(int argc, char** argv) {
         //TODO: manage H-Ellpack
         ell = read_mm_ell(elems, m, n, nz);
         m = ell->M;
-        n = ell->N;
         nz = ell->NZ;
-    #ifdef DEBUG
+#ifdef DEBUG
         print_ell(ell);
-    #endif
+#endif
 #else
         csr = read_mm_csr(elems, m, n, nz);
         m = csr->M;
         n = csr->N;
         nz = csr->NZ;
-        irp = csr->IRP;
-        ja = csr->JA;
-        as = csr->AS;
-    #ifdef DEBUG
+#ifdef DEBUG
         print_csr(csr);
-    #endif
+#endif
 #endif
 
-        flop = (double)2*k*nz;
-        alloc_struct(&y_s, m, k);
+        flop = (double) 2 * k * nz;
     }
 
-    //------------------------------------------- Communication ------------------------------------------- //
-    MPI_Bcast(&n, 1, MPI_INT, 0, comm);
-    MPI_Bcast(&k, 1, MPI_INT, 0, comm);
-    MPI_Bcast(&nz, 1, MPI_INT, 0, comm);
+    broadcasting(comm, rank, &n, &k, &x);
 
-    alloc_struct(&x, n, k);
-    if (rank == 0) {
-        populate_multivector(x, n, k);
-        // ---------------------------------------------- Serial SpMM ---------------------------------------------- //
+    // ---------------------------------------------- Serial SpMM ---------------------------------------------- //
+    if(rank == 0) {
+        alloc_struct(&y_s, m, k);
         clock_gettime(CLOCK_MONOTONIC, &t1);
 #ifdef ELLPACK
         serial_product_ell(ell, x, k, y_s);
@@ -203,53 +294,27 @@ int main(int argc, char** argv) {
         gflops_s = get_gflops(t1, t2, flop);
     }
 
-    MPI_Bcast(x, n * k, MPI_DOUBLE, 0, comm);
-
+    //----------------------------------- Balancing and Communication ------------------------------------------- //
+    int *ma;
 #ifdef ELLPACK
-    //TODO
+    ell_load_balancing();
 #else
-    int *ma, *nza, *nz_disp, *m_disp;
-    if(rank == 0) {
-        ma = (int*)malloc(size*sizeof(int));
-        m_disp = (int*)malloc(size*sizeof(int));
-        nza = (int*)malloc(size*sizeof(int));
-        nz_disp = (int*)malloc(size*sizeof(int));
-        malloc_handler(4, (void*[]){ma, m_disp, nza, nz_disp});
-
-        csr_load_balancing(size, csr, ma, nza, nz_disp, m_disp);
-    }
-
-    int l_m, l_nz;
-
-    MPI_Scatter(ma, 1, MPI_INT, &l_m, 1, MPI_INT, 0, comm); // scatter local number of rows per process
-    MPI_Scatter(nza, 1, MPI_INT, &l_nz, 1, MPI_INT, 0, comm); // scatter local number of nz per process
-
-    int* l_irp = (int*)malloc((l_m+1) * sizeof(int));
-    int* l_ja = (int*)malloc(l_nz * sizeof(int));
-    double* l_as = (double*)malloc(l_nz * sizeof(double));
-    malloc_handler(3, (void*[]){l_irp, l_ja, l_as});
-
-    MPI_Scatterv(irp, ma, m_disp, MPI_INT, l_irp, l_m+1, MPI_INT, 0, comm); // scatter irp portion per process
-    MPI_Scatterv(ja, nza, nz_disp, MPI_INT, l_ja, l_nz, MPI_INT, 0, comm); // scatter ja portion per process
-    MPI_Scatterv(as, nza, nz_disp, MPI_DOUBLE, l_as, l_nz, MPI_DOUBLE, 0, comm); // scatter as portion per process
-
-    if (rank == 0) clean_up(2, (void*[]){nza, nz_disp});
+    csr_load_balancing(comm, size, rank, csr, &l_csr, &ma);
+    if (rank == 0) clean_up(4, (void*[]){csr->AS, csr->JA, csr->IRP, csr});
+#endif
 
     //--------------------------------------- MPI+OpenMP SpMM ----------------------------------------------- //
+    l_m = l_csr->M;
     alloc_struct(&y_p, l_m, k);
-    CSR* l_csr = (CSR*) malloc(sizeof(CSR));
-    malloc_handler(1, (void*[]){l_csr});
-
-    l_csr->M = l_m;
-    l_csr->NZ = l_nz;
-    l_csr->IRP = l_irp;
-    l_csr->JA = l_ja;
-    l_csr->AS = l_as;
 
     MPI_Barrier(comm);
     if (rank == 0) clock_gettime(CLOCK_MONOTONIC, &t1);
 
-    product_csr(l_csr, num_threads, x, k, y_p);
+#ifdef ELLPACK
+    //TODO
+#else
+    product_csr(l_csr, rank, num_threads, x, k, y_p);
+#endif
 
     MPI_Barrier(comm);
     if (rank == 0) {
@@ -257,38 +322,29 @@ int main(int argc, char** argv) {
         gflops_p = get_gflops(t1, t2, flop);
     }
 
-    // CSR local cleanup
-    clean_up(4, (void*[]){l_irp, l_ja, l_as, l_csr});
+#ifdef ELLPACK
+    //TODO
+#else
+    clean_up(4, (void*[]){l_csr->AS, l_csr->JA, l_csr->IRP, l_csr});
 #endif
 
     //--------------------------------------------------- Output
-    double* y_complete;
-
-    if(rank == 0) {
-        y_complete = (double*) malloc(m * k * sizeof(double));
-        malloc_handler(1, (void*[]){y_complete});
-
-        for (int i = 0; i < size; i++) {
-            ma[i] = ma[i]*k;
-            m_disp[i] = (i == 0) ? 0 : ma[i-1];
-        }
-    }
-
-    MPI_Gatherv(y_p, l_m*k, MPI_DOUBLE, y_complete, ma, m_disp, MPI_DOUBLE, 0, comm);
+    double* y_complete = gather_result(comm, size, rank, y_p, m, k, l_m, ma);
     clean_up(2, (void*[]){x, y_p});
 
     if (rank == 0) {
 #ifdef DEBUG
         // print results
-        print_matrix(y_complete, csr->M, k, "\nResult:\n");
+        print_matrix(y_complete, m, k, "\nResult:\n");
 #endif
+
 #ifdef SAVE
         save_result(y_complete, csr->M, k);
 #endif
+
         abs_err = get_absolute_error(m*k, y_s, y_complete);
         rel_err = get_relative_error(m*k, abs_err, y_s);
-
-        clean_up(8, (void*[]){irp, as, ja, csr, ma, m_disp, y_complete, y_s});
+        clean_up(2, (void*[]){y_complete, y_s});
 
 #ifdef PERFORMANCE
         fprintf(stdout, "%f", gflops_p);
