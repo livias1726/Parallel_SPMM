@@ -1,8 +1,22 @@
 project(SCPA_Project)
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.20)
 
 set(CMAKE_C_STANDARD 11)
 set(UTILS_SRC ../lib/mmio.c ../utils/utils.c ../utils/serial.c ../utils/storage.c ../utils/error.c ../utils/io.c)
+
+if (QUERY)
+    add_definitions(-DQUERY=1)
+endif()
+
+if (PERFORMANCE)
+    add_definitions(-DPERFORMANCE=1)
+elseif(DEBUG)
+    add_definitions(-DDEBUG=1)
+endif ()
+
+if(ELLPACK)
+    add_definitions(-DELLPACK=1)
+endif()
 
 if (OPENMP)
     add_subdirectory(openmp)

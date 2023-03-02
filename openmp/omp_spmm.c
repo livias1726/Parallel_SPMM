@@ -117,17 +117,11 @@ int main(int argc, char** argv) {
 #ifdef ELLPACK
     //TODO: manage H-Ellpack
     ell = read_mm_ell(elems, m, n, nz);
-    m = ell->M;
-    n = ell->N;
-    nz = ell->NZ;
     #ifdef DEBUG
     print_ell(ell);
     #endif
 #else
     csr = read_mm_csr(elems, m, n, nz);
-    m = csr->M;
-    n = csr->N;
-    nz = csr->NZ;
     #ifdef DEBUG
     print_csr(csr);
     #endif
@@ -155,7 +149,7 @@ int main(int argc, char** argv) {
     serial_product_csr(csr, x, k, y_s);
 #endif
     clock_gettime(CLOCK_MONOTONIC, &t2);
-    gflops_s = get_gflops(t1, t2, flop);
+    gflops_s = GET_GFLOPS(t1, t2, flop);
 
     // -------------------------------------------- OpenMP SpMM ---------------------------------------------- //
 #ifdef ELLPACK
@@ -165,7 +159,7 @@ int main(int argc, char** argv) {
     product_ell(*ell, x, k, y_p, &t1, &t2);
 
     clock_gettime(CLOCK_MONOTONIC, &t2);
-    gflops_p = get_gflops(t1, t2, flop);
+    gflops_p = GET_GFLOPS(t1, t2, flop);
 
     free(ell);
 #else
@@ -177,7 +171,7 @@ int main(int argc, char** argv) {
 
     clock_gettime(CLOCK_MONOTONIC, &t2);
 
-    gflops_p = get_gflops(t1, t2, flop);
+    gflops_p = GET_GFLOPS(t1, t2, flop);
 
     free(rows_idx);
     free(csr);

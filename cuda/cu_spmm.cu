@@ -91,70 +91,67 @@ __global__ void product_csr_adaptive(CSR* csr, int* blocks, const double* x, dou
  *        many threads within a warp will remain idle while waiting for the thread with the longest row.
  * */
 __global__ void product_csr_scalar(const int rows, const int *irp, const int *ja, const double *as,
-                                   const double *x, const int k, double *y){
-    int row = blockDim.x * blockIdx.x + threadIdx.x;
-    if (row < rows){
-        double temp = 0.0;
-        int row_start = irp[row];
-        int row_end = irp[row+1];
+                                   const double *x, int k, double *y){
+    /*
+    threadIdx — thread position within a thread block
+    blockDim — dimensions of the thread block
+    blockIdx — block position in the grid
+    gridDim — dimensions of the grid of thread blocks
+    */
+    int i = threadIdx.x + (blockIdx.x * blockDim.x); // global index of the thread --> index of the row
+    if (i < rows){
+        double *temp = &y[i*k];
+        int row_start = irp[i];
+        int row_end = irp[i+1];
 
         for(int z = 0; z < k; z++){
-            for (int j = row_start; j < row_end; j ++)
-                temp += as[j] * x[ja[j]*k + z];
+            temp[z] = 0.0;
+            for (int j = row_start; j < row_end; j++)
+                temp[z] += as[j] * x[ja[j]*k + z];
         }
-
-        y[row] += temp;
     }
 }
 
 int main(int argc, char** argv) {
-
+    // host
     MM_typecode t;
     FILE *f;
     CSR *csr;
-    //ELL *ell, *d_ell;
+    int k, m, n, nz;
     double gflops_s, gflops_p, abs_err, rel_err;
-    double *x, *y_s, *y_p, *d_x, *d_y;
-    int k, m, n, nz, flop;
+    double *x, *y_s, *y_p, flop;
+    // device
+    double *d_x, *d_y, *d_as;
     int *d_irp, *d_ja;
-    double *d_as;
 
     // ----------------------- Set Up ------------------------------------------- //
 
     process_arguments(argc, argv, &f, &k);
     process_mm(&t, f);
 
+    // read matrix from file
+    Elem** elems = read_mm(f, &m, &n, &nz, t);
+    fclose(f);
+
     // ----------------------- Host memory initialisation ----------------------- //
 
     // convert to wanted storage format
 #ifdef ELLPACK
-    ell = read_mm_ell(f, t);
-    m = ell->M;
-    n = ell->N;
-    nz = ell->NZ;
-
+    //TODO: manage H-Ellpack
+    ell = read_mm_ell(elems, m, n, nz);
     #ifdef DEBUG
     print_ell(ell);
     #endif
-
-    checkCudaErrors(cudaMalloc((void**) &d_ell, sizeof(ELL)));
-    checkCudaErrors(cudaMemcpy(d_ell, ell, sizeof(ELL), cudaMemcpyHostToDevice));
+    //TODO: allocCudaEll()
 #else
-    csr = read_mm_csr(f, t);
-    m = csr->M;
-    n = csr->N;
-    nz = csr->NZ;
-
+    csr = read_mm_csr(elems, m, n, nz);
     #ifdef DEBUG
     print_csr(csr);
     #endif
-
     allocCudaCsr(csr, &d_irp, &d_ja, &d_as);
 #endif
 
-    fclose(f);
-
-    flop = 2*k*nz;
+    flop = (double)2*k*nz;
 
     alloc_struct(&x, n, k);
     alloc_struct(&y_s, m ,k);
@@ -172,7 +169,7 @@ int main(int argc, char** argv) {
     StopWatchInterface* timer = 0;
     sdkCreateTimer(&timer);
 
-    // ------------------------ Product on the CPU ------------------------- //
+    // ------------------------------------------- Serial CPU SpMM --------------------------------------------- //
     timer->start();
 #ifdef ELLPACK
     serial_product_ell(ell, x, k, y_s);
@@ -183,21 +180,26 @@ int main(int argc, char** argv) {
 
     gflops_s = (double)flop/((timer->getTime())*1.e6);
 
-    // ------------------------ Product on the GPU ------------------------- //
+    // --------------------------------------------- GPU SpMM -------------------------------------------------- //
 #ifdef ELLPACK
     //TODO
 #else
+    /* SCALAR */
+    dim3 GRID_DIM;
+    get_grid(m, GRID_DIM);
+    timer->start();
+    product_csr_scalar<<<GRID_DIM, BD>>>(m, d_irp, d_ja, d_as, d_x, k, d_y);
+    checkCudaErrors(cudaDeviceSynchronize());
+    timer->stop();
+
     // compute row blocks
+    /*
     int *d_blocks, *blocks = (int*)malloc(m*sizeof(int));
     int num_blocks = csr_adaptive_blocks(m, csr->IRP, blocks);
     checkCudaErrors(cudaMalloc((void**) &d_blocks, num_blocks*sizeof(int)));
     checkCudaErrors(cudaMemcpy(d_blocks, blocks, num_blocks*sizeof(int), cudaMemcpyHostToDevice));
-
-    timer->start();
-    product_csr_scalar<<<num_blocks-1,BD>>>(m, d_irp, d_ja, d_as, d_x, k, d_y);
-    //product_csr_adaptive<<<num_blocks-1, BD>>>(d_csr, d_blocks, d_x, d_y);
-    checkCudaErrors(cudaDeviceSynchronize());
-    timer->stop();
+    product_csr_adaptive<<<num_blocks-1, BD>>>(d_csr, d_blocks, d_x, d_y);
+     */
 #endif
 
     gflops_p = (double)flop/((timer->getTime())*1.e6);
@@ -211,7 +213,7 @@ int main(int argc, char** argv) {
     delete timer;
 
 #ifdef ELLPACK
-    checkCudaErrors(cudaFree(d_ell));
+    //TODO
     delete[] ell;
 #else
     checkCudaErrors(cudaFree(d_irp));
@@ -220,7 +222,7 @@ int main(int argc, char** argv) {
     delete[] csr;
 #endif
 
-    checkCudaErrors(cudaFree(d_blocks));
+    //checkCudaErrors(cudaFree(d_blocks));
     checkCudaErrors(cudaFree(d_x));
     checkCudaErrors(cudaFree(d_y));
 
