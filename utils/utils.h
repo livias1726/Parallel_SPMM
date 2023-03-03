@@ -88,8 +88,9 @@ void populate_multivector(double*, int, int);
 void save_result(double*, int, int);
 void alloc_struct(double**, int, int);
 
-double get_absolute_error(int, double*, double*);
-double get_relative_error(int, double, double*);
+//double get_absolute_error(int, double*, double*);
+//double get_relative_error(int, double, double*);
+void get_errors(int rows, int cols, double* seq, double* par, double* abs, double* rel);
 
 void serial_product_csr(CSR*, const double*, int, double*);
 void serial_product_ell(ELL, const double*, int, double*);

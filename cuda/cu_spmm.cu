@@ -92,22 +92,19 @@ __global__ void product_csr_adaptive(CSR* csr, int* blocks, const double* x, dou
  * */
 __global__ void product_csr_scalar(const int rows, const int *irp, const int *ja, const double *as,
                                    const double *x, int k, double *y){
-    /*
-    threadIdx — thread position within a thread block
-    blockDim — dimensions of the thread block
-    blockIdx — block position in the grid
-    gridDim — dimensions of the grid of thread blocks
-    */
+
     int i = threadIdx.x + (blockIdx.x * blockDim.x); // global index of the thread --> index of the row
     if (i < rows){
-        double *temp = &y[i*k];
+        double temp;
         int row_start = irp[i];
         int row_end = irp[i+1];
 
         for(int z = 0; z < k; z++){
-            temp[z] = 0.0;
-            for (int j = row_start; j < row_end; j++)
-                temp[z] += as[j] * x[ja[j]*k + z];
+            temp = 0.0;
+            for (int j = row_start; j < row_end; j++) {
+                temp += as[j] * x[ja[j] * k + z];
+            }
+            y[i*k + z] = temp;
         }
     }
 }
@@ -179,6 +176,7 @@ int main(int argc, char** argv) {
     timer->stop();
 
     gflops_s = (double)flop/((timer->getTime())*1.e6);
+    timer->reset();
 
     // --------------------------------------------- GPU SpMM -------------------------------------------------- //
 #ifdef ELLPACK
@@ -187,6 +185,7 @@ int main(int argc, char** argv) {
     /* SCALAR */
     dim3 GRID_DIM;
     get_grid(m, GRID_DIM);
+
     timer->start();
     product_csr_scalar<<<GRID_DIM, BD>>>(m, d_irp, d_ja, d_as, d_x, k, d_y);
     checkCudaErrors(cudaDeviceSynchronize());
@@ -206,8 +205,7 @@ int main(int argc, char** argv) {
     checkCudaErrors(cudaMemcpy(y_p, d_y, m * k * sizeof(double), cudaMemcpyDeviceToHost));
 
     // check results
-    abs_err = get_absolute_error(m*k, y_s, y_p);
-    rel_err = get_relative_error(m*k, abs_err, y_s);
+    get_errors(m, k, y_s, y_p, &abs_err, &rel_err);
 
 // ------------------------------- Cleaning up ------------------------------ //
     delete timer;
@@ -233,7 +231,7 @@ int main(int argc, char** argv) {
 #ifdef PERFORMANCE
     fprintf(stdout, "%f %f %f %f", gflops_s, gflops_p, abs_err, rel_err);
 #else
-    fprintf(stdout, "\nSerial GFLOPS: %f\nParallel GFLOPS: %f\nAbsolute error: %f\nRelative error: %f\n",
+    fprintf(stdout, "Serial GFLOPS: %f\nParallel GFLOPS: %f\nAbsolute error: %.2e\nRelative error: %.2e\n",
             gflops_s, gflops_p, abs_err, rel_err);
 #endif
 

@@ -62,7 +62,7 @@ void allocCudaCsr(CSR* csr, int **d_irp, int **d_ja, double **d_as){
 
     checkCudaErrors(cudaMemcpy(*d_irp, irp, (m+1)*sizeof(int), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(*d_ja, ja, nz*sizeof(int), cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy(*d_as, as, nz*sizeof(int), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(*d_as, as, nz*sizeof(double), cudaMemcpyHostToDevice));
 }
 
 void allocCudaSpmm(double **d_x, double **d_y, const double *x, int m, int n, int k){

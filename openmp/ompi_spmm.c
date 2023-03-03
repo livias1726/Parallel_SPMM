@@ -342,14 +342,14 @@ int main(int argc, char** argv) {
         save_result(y_complete, csr->M, k);
 #endif
 
-        abs_err = get_absolute_error(m*k, y_s, y_complete);
-        rel_err = get_relative_error(m*k, abs_err, y_s);
+        // check results
+        get_errors(m, k, y_s, y_complete, &abs_err, &rel_err);
         clean_up(2, (void*[]){y_complete, y_s});
 
 #ifdef PERFORMANCE
         fprintf(stdout, "%f", gflops_p);
 #else
-        fprintf(stdout, "Serial GFLOPS: %f\nParallel GFLOPS: %f\nAbsolute error: %f\nRelative error: %f\n",
+        fprintf(stdout, "Serial GFLOPS: %f\nParallel GFLOPS: %f\nAbsolute error: %.2e\nRelative error: %.2e\n",
                 gflops_s, gflops_p, abs_err, rel_err);
 #endif
     }

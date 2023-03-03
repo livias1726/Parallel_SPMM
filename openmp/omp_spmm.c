@@ -166,38 +166,30 @@ int main(int argc, char** argv) {
     int* rows_idx = nz_balancing(num_threads, nz, csr->IRP, csr->M);
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
-
     product_csr(csr, rows_idx, num_threads, x, k, y_p);
-
     clock_gettime(CLOCK_MONOTONIC, &t2);
 
     gflops_p = GET_GFLOPS(t1, t2, flop);
 
-    free(rows_idx);
-    free(csr);
+    clean_up(5, (void*[]){csr->AS, csr->JA, csr->IRP, csr, rows_idx});
 #endif
 
-    abs_err = get_absolute_error(m*k, y_s, y_p);
-    rel_err = get_relative_error(m*k, abs_err, y_s);
+    // check results
+    get_errors(m, k, y_s, y_p, &abs_err, &rel_err);
 #ifdef SAVE
     save_result(y_p, m, k);
 #endif
-
-    free(x);
-
 #ifdef DEBUG
-    // print results
     print_matrix(y_s, m, k, "\nSerial Result:\n");
     print_matrix(y_p, m, k, "\nParallel Result:\n");
 #endif
 
-    free(y_s);
-    free(y_p);
+    clean_up(3, (void*[]){x, y_s, y_p});
 
 #ifdef PERFORMANCE
     fprintf(stdout, "%f %f %f %f", gflops_s, gflops_p, abs_err, rel_err);
 #else
-    fprintf(stdout, "Serial GFLOPS: %f\nParallel GFLOPS: %f\nAbsolute error: %f\nRelative error: %f\n",
+    fprintf(stdout, "Serial GFLOPS: %f\nParallel GFLOPS: %f\nAbsolute error: %.2e\nRelative error: %.2e\n",
             gflops_s, gflops_p, abs_err, rel_err);
 #endif
 
