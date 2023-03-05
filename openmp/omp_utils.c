@@ -51,7 +51,7 @@ void process_arguments(int argc, char** argv, FILE **f, int* k, int* num_threads
     }
 
     // create file path
-    char path[PATH_MAX] = "../resources/files/";
+    char path[PATH_MAX] = "resources/files/";
     strcat(path, argv[1]);
 
     //check the correct opening of the matrix file

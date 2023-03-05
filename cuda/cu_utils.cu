@@ -21,30 +21,53 @@ void process_arguments(int argc, char** argv, FILE **f, int* k){
     *k = (int)strtol(argv[2], NULL, 10);
 }
 
+/**
+ * CPU code that calculates the number of rows of a CSR matrix that can fit into LDS entries of size BD.
+ * Computes the number of rows to give each block (s.t. # NZ <= BD) and the total number of blocks to cover all rows.
+ *
+ * Implementation of Algorithm 2 of
+ * 'Greathouse, Daga - Efficient Sparse Matrix-Vector Multiplication on GPUs using the CSR Storage Format'
+ * where BD is the fixed local size of the scratchpad memory
+ *
+ * @param rows total number of rows in A
+ * @param irp row delimiters of CSR format
+ * @param blocks output array of row blocks
+ * */
 int csr_adaptive_blocks(int rows, int* irp, int* blocks){
 
-    int nz_row = 0, last = 0, ctr = 1;
-
+    int nz = 0, last = 0, ctr = 1;
     blocks[0] = 0;
-    for (int i = 1; i < rows; i++) {
-        nz_row += irp[i] - irp[i-1];
 
-        if (nz_row == BD){ // row fills up block dim
+    for (int i = 1; i < rows; i++) {
+        nz += irp[i] - irp[i-1]; // count the sum of non-zeros in the considered rows
+
+        /*
+        if (nz == BD) { // fills up the local size
             last = i;
             blocks[ctr++] = i;
-            nz_row = 0;
-
-        } else if (nz_row > BD){
-            if (i - last > 1) { // not enough space
+            nz = 0;
+        } else if (nz > BD) {
+            if (i - last > 1) { // the extra row will not fit
                 blocks[ctr++] = i - 1;
                 i--;
-            } else if (i - last == 1) { // too large
+            } else if (i - last == 1) { // this row is too large
                 blocks[ctr++] = i;
             }
 
             last = i;
-            nz_row = 0;
+            nz = 0;
         }
+         */
+
+        if (nz < BD) continue;
+
+        // more than 1 row --> not enough space: decrease number of rows for the block
+        if ((nz > BD) && (i - last > 1)) i--;
+        // else: exactly 1 row --> too large: there are more non-zeros in a row than threads in a block
+
+        last = i;
+        blocks[ctr++] = i;
+        nz = 0;
     }
 
     blocks[ctr++] = rows;

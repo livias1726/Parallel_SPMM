@@ -14,14 +14,17 @@ extern "C" {
 
 #define BD 256
 #define MAX_REG 65535
+#define MAX_THREADS (48 * 1024) // max number of co-resident threads: number of SM * threads per SM
+#define MAX_NUM_ROWS 1 // delta number of rows for the Vector kernel computation
+#define MAX_K 4
+#define MAX_SHARED_MEM = 49152
 
 /**
  *  For a given number of blocks, return a 2D grid large enough to contain them
  *  @param t number of threads (number of rows in scalar kernel)
  *  @param g output grid dimension
  */
-#define get_grid(t, g)                             \
-    int num_blocks = (t + BD - 1)/BD;          \
+#define GET_GRID(t, g)                             \
     if (num_blocks <= MAX_REG){                      \
         g = dim3(num_blocks);                               \
     } else {                                            \
