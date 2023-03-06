@@ -6,7 +6,7 @@
  * - X is a Nxk dense multivector
  * */
 
-//---------------------------------------------------------------------------------------------------Product
+//------------------------------------------------ SpMM ---------------------------------------------------------//
 /**
  * Computes the product with A stored in a CSR format
  *
@@ -16,44 +16,42 @@
  * @param k number of columns of x
  * @param y receives product results Mxk stored as 1D array
  * */
-//TODO: try to parallelize the iteration on x --> each thread has a block of y (rows_load x cols_load)
-// --> cols_load will be the columns of x that the thread has to manage
 void product_csr(CSR *mat, const int* rows_load, int threads, double* x, int k, double* y){
 
     int *irp = mat->IRP, *ja = mat->JA;
     double *as = mat->AS;
 
-    int z;
-#pragma omp parallel for num_threads(threads) private(z) shared(threads, rows_load, irp, k, as, ja, x, y) default(none)
+    int i, j, z;
+    double *t, *x_r, val;
+    #pragma omp parallel for num_threads(threads) \
+                                private(i, t, j, x_r, val, z) \
+                                shared(threads, rows_load, irp, k, as, ja, x, y) default(none)
     for (int tid = 0; tid < threads; tid++) {
-        int i, j;
-        double *row_tmp, *col_tmp, a_j;
-
         for (i = rows_load[tid]; i < rows_load[tid + 1]; i++) { // get the specific A's row to process
-            row_tmp = &y[i * k]; //the respective Y's row to accumulate products on
+            t = &y[i * k]; //the respective Y's row to accumulate products on
 
             for (j = irp[i]; j < irp[i+1]; j++) { // iterate over the nz values in the row
                 // load just once
-                col_tmp = &x[ja[j]*k]; //the respective X's row index
-                a_j = as[j]; //the respective NZ value
+                x_r = &x[ja[j] * k]; //the respective X's row index
+                val = as[j]; //the respective NZ value
 
                 // Loop unrolling
                 if (k % 4 == 0) { // avoids to process values like '12' with a 3-level loop unroll
                     for (z = 0; z < k; z += 4) {
-                        row_tmp[z] += a_j * col_tmp[z];
-                        row_tmp[z+1] += a_j * col_tmp[z+1];
-                        row_tmp[z+2] += a_j * col_tmp[z+2];
-                        row_tmp[z+3] += a_j * col_tmp[z+3];
+                        t[z] += val * x_r[z];
+                        t[z + 1] += val * x_r[z + 1];
+                        t[z + 2] += val * x_r[z + 2];
+                        t[z + 3] += val * x_r[z + 3];
                     }
                 } else if (k % 3 == 0) {
                     for (z = 0; z < k; z += 3) {
-                        row_tmp[z] += a_j * col_tmp[z];
-                        row_tmp[z+1] += a_j * col_tmp[z+1];
-                        row_tmp[z+2] += a_j * col_tmp[z+2];
+                        t[z] += val * x_r[z];
+                        t[z + 1] += val * x_r[z + 1];
+                        t[z + 2] += val * x_r[z + 2];
                     }
                 } else {
                     for (z = 0; z < k; z++) {
-                        row_tmp[z] += a_j * col_tmp[z];
+                        t[z] += val * x_r[z];
                     }
                 }
             }
@@ -66,33 +64,52 @@ void product_csr(CSR *mat, const int* rows_load, int threads, double* x, int k, 
  *
  * @param mat matrix in ellpack format
  * @param x multivector Nxk stored as 1D array
+ * @param k number of columns of x
  * @param y receives product results Mxk stored as 1D array
- * @param t1 pointer to first timeval structure
- * @param t2 pointer to second timeval structure
  * */
-void product_ell(ELL mat, const double* x, int k, double* y, struct timespec *t1, struct timespec *t2){
-    int i, j, z, maxnz = mat.MAXNZ;
-    double t, val;
+// 1. each thread gets a row from omp
+// 2. in the given row, the thread reads nz value and col idx
+// 3. for each nz in the row, the thread accumulates the partial products, reading x row by row
+void product_ell(ELL* mat, int threads, double* x, int k, double* y){
+    int maxnz = mat->MAXNZ, rows = mat->M, *ja = mat->JA;
+    double *as = mat->AS;
 
-    clock_gettime(CLOCK_MONOTONIC, t1);
-    // TODO: version 1 -> to be optimized
-#pragma omp parallel for schedule(guided) shared(k, maxnz, x, mat, y) private(z, t, j, val) default(none)
-    for (i = 0; i < mat.M; i++) {
-        for (z = 0; z < k; z++) { //TODO: check order of loops
-            t = 0.0;
+    int z, nz_idx;
+    double *x_r, val, *t;
 
-            for (j = 0; j < maxnz; j++) {
-                val = mat.AS[i*maxnz+j];
-                if (val == 0) { // if padding is reached break loop
-                    break;
+    #pragma omp parallel for num_threads(threads) private(t, nz_idx, val, x_r, z) shared(maxnz, rows, ja, as, k, x, y) default(none)
+    for (int i = 0; i < rows; i++) {
+        t = &y[i*k]; // prefetching of the row to update;
+
+        for (int j = 0; j < maxnz; j++) {
+            nz_idx = i*maxnz+j;
+
+            val = as[nz_idx];
+            if (val == 0) break; // if padding is reached break loop
+
+            x_r = &x[ja[nz_idx]*k]; // prefetching of the row in x to read from
+
+            // Loop unrolling
+            if (k % 4 == 0) { // avoids to process values like '12' with a 3-level loop unroll
+                for (z = 0; z < k; z += 4) {
+                    t[z] += val * x_r[z];
+                    t[z+1] += val * x_r[z+1];
+                    t[z+2] += val * x_r[z+2];
+                    t[z+3] += val * x_r[z+3];
                 }
-                t += val*x[mat.JA[i*maxnz+j]*k+z];
+            } else if (k % 3 == 0) {
+                for (z = 0; z < k; z += 3) {
+                    t[z] += val * x_r[z];
+                    t[z+1] += val * x_r[z+1];
+                    t[z+2] += val * x_r[z+2];
+                }
+            } else {
+                for (z = 0; z < k; z++) {
+                    t[z] += val * x_r[z];
+                }
             }
-
-            y[i*k+z] = t;
         }
     }
-    clock_gettime(CLOCK_MONOTONIC, t2);
 }
 
 //-----------------------------------------------------------------------------------------Main
@@ -102,13 +119,14 @@ int main(int argc, char** argv) {
     FILE *f;
     CSR* csr;
     ELL* ell;
-    double gflops_s, gflops_p, abs_err, rel_err, *x, *y_s, *y_p;
+    double flop, gflops_s, gflops_p, abs_err, rel_err, *x, *y_s, *y_p;
     int k, m, n, nz, num_threads;
     struct timespec t1, t2;
 
     process_arguments(argc, argv, &f, &k, &num_threads);
     process_mm(&t, f);
 
+    // ------------------------------------------------ Pre-processing ------------------------------------------- //
     // read matrix from file
     Elem** elems = read_mm(f, &m, &n, &nz, t);
     fclose(f);
@@ -138,32 +156,37 @@ int main(int argc, char** argv) {
     print_matrix(x, n, k, "\nMultivector:\n");
 #endif
 
-    double flop = (double)2*k*nz;
+    flop = (double)2*k*nz;
 
-    // ----------------------------------- Serial SpMM -------------------------------------------- //
+    // ----------------------------------------------- Serial SpMM -------------------------------------------- //
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
 #ifdef ELLPACK
-    serial_product_ell(*ell, x, k, y_s);
+    serial_product_ell(ell, x, k, y_s);
 #else
     serial_product_csr(csr, x, k, y_s);
 #endif
     clock_gettime(CLOCK_MONOTONIC, &t2);
     gflops_s = GET_GFLOPS(t1, t2, flop);
 
-    // -------------------------------------------- OpenMP SpMM ---------------------------------------------- //
+    // ----------------------------------------------- OpenMP SpMM ---------------------------------------------- //
 #ifdef ELLPACK
+    /*int* ordered_rows_idx = (int*) malloc(m * sizeof(int));
+    int* rows_displ = (int*) malloc((num_threads+1) * sizeof(int));
+    malloc_handler(2, (void*[]){ordered_rows_idx, rows_displ});
+
+    ell_nz_balancing(num_threads, ell, ordered_rows_idx, rows_displ);*/
+
     clock_gettime(CLOCK_MONOTONIC, &t1);
-
-    //TODO
-    product_ell(*ell, x, k, y_p, &t1, &t2);
-
+    product_ell(ell, num_threads, x, k, y_p);
     clock_gettime(CLOCK_MONOTONIC, &t2);
+
     gflops_p = GET_GFLOPS(t1, t2, flop);
 
-    free(ell);
+    clean_up(3, (void*[]){ell->AS, ell->JA, ell});
 #else
-    int* rows_idx = nz_balancing(num_threads, nz, csr->IRP, csr->M);
+
+    int* rows_idx = csr_nz_balancing(num_threads, nz, csr->IRP, csr->M);
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
     product_csr(csr, rows_idx, num_threads, x, k, y_p);

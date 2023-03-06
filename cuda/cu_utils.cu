@@ -25,56 +25,87 @@ void process_arguments(int argc, char** argv, FILE **f, int* k){
  * CPU code that calculates the number of rows of a CSR matrix that can fit into LDS entries of size BD.
  * Computes the number of rows to give each block (s.t. # NZ <= BD) and the total number of blocks to cover all rows.
  *
- * Implementation of Algorithm 2 of
+ * In addition, this returns the maximum number of NZs assigned to a block. Used in the computation of the
+ * dynamic shared memory size.
+ *
+ * Inspired by Algorithm 2 of
  * 'Greathouse, Daga - Efficient Sparse Matrix-Vector Multiplication on GPUs using the CSR Storage Format'
- * where BD is the fixed local size of the scratchpad memory
+ * where BD is the fixed local size of the scratchpad memory.
  *
  * @param rows total number of rows in A
  * @param irp row delimiters of CSR format
  * @param blocks output array of row blocks
  * */
-int csr_adaptive_blocks(int rows, int* irp, int* blocks){
+int get_csr_row_blocks(int rows, int* irp, int* blocks, int *max_nz){
 
-    int nz = 0, last = 0, ctr = 1;
+    int nz = 0, max = 0, last_nz = 0, last_i = 0, ctr = 1;
     blocks[0] = 0;
 
     for (int i = 1; i < rows; i++) {
         nz += irp[i] - irp[i-1]; // count the sum of non-zeros in the considered rows
 
-        /*
-        if (nz == BD) { // fills up the local size
-            last = i;
+        if (nz == BDX) { // fills up the local size
+            last_i = i;
             blocks[ctr++] = i;
+            GET_MAX(max, nz)
             nz = 0;
-        } else if (nz > BD) {
-            if (i - last > 1) { // the extra row will not fit
-                blocks[ctr++] = i - 1;
+
+        } else if (nz > BDX) {
+            if (i - last_i > 1) { // more than 1 row --> not enough space: decrease number of rows for the block
                 i--;
-            } else if (i - last == 1) { // this row is too large
-                blocks[ctr++] = i;
+                GET_MAX(max, last_nz)
+            } else { //last_i cannot be lower than i+1
+                // exactly 1 row --> too large: there are more non-zeros in a row than threads in a block
+                GET_MAX(max, nz)
             }
 
-            last = i;
+            last_i = i;
+            blocks[ctr++] = i;
             nz = 0;
         }
-         */
 
-        if (nz < BD) continue;
-
-        // more than 1 row --> not enough space: decrease number of rows for the block
-        if ((nz > BD) && (i - last > 1)) i--;
-        // else: exactly 1 row --> too large: there are more non-zeros in a row than threads in a block
-
-        last = i;
-        blocks[ctr++] = i;
-        nz = 0;
+        GET_MAX(max, nz)
+        last_nz = nz;
     }
 
     blocks[ctr++] = rows;
+    last_nz += irp[rows] - irp[rows-1];
+    GET_MAX(max, last_nz)
+    *max_nz = max;
     return ctr;
 }
 
-void allocCudaCsr(CSR* csr, int **d_irp, int **d_ja, double **d_as){
+/**
+ * Computes the dimension of the dynamic shared memory to be used in each block.
+ *
+ * With this implementation each block should use a memory of (local_nz*k) doubles. To give each one the same size,
+ * 'max_nz' computed during 'get_csr_row_blocks()'.
+ *
+ * When max_nz*k is bigger than the maximum available shared memory in the device, halve the amount of memory.
+ * The number of times this amount has been halved will be given to the blocks to know when to reduce.
+ * */
+ //TODO: manage when shmem is bigger than available
+int get_shared_memory(int max, int k){
+    int num = (max * 2)*sizeof(double);
+    /*
+    int halves = 0;
+
+    while (num > MAX_SHARED_MEM) {
+        num = (num+1)/2;
+        halves++;
+    }
+
+    *round = halves+1;
+    return num;*/
+
+    if (num > MAX_SHARED_MEM) {
+        return -1;
+    } else {
+        return num;
+    }
+}
+
+void alloc_cuda_csr(CSR* csr, int **d_irp, int **d_ja, double **d_as){
     int m = csr->M, nz = csr->NZ;
     int *irp = csr->IRP, *ja = csr->JA;
     double *as = csr->AS;
@@ -88,7 +119,7 @@ void allocCudaCsr(CSR* csr, int **d_irp, int **d_ja, double **d_as){
     checkCudaErrors(cudaMemcpy(*d_as, as, nz*sizeof(double), cudaMemcpyHostToDevice));
 }
 
-void allocCudaSpmm(double **d_x, double **d_y, const double *x, int m, int n, int k){
+void alloc_cuda_spmm(double **d_x, double **d_y, const double *x, int m, int n, int k){
 
     checkCudaErrors(cudaMalloc((void**) d_x, n * k * sizeof(double)));
     checkCudaErrors(cudaMalloc((void**) d_y, m * k * sizeof(double)));

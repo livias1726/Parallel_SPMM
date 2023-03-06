@@ -284,6 +284,7 @@ int main(int argc, char** argv) {
     // ---------------------------------------------- Serial SpMM ---------------------------------------------- //
     if(rank == 0) {
         alloc_struct(&y_s, m, k);
+
         clock_gettime(CLOCK_MONOTONIC, &t1);
 #ifdef ELLPACK
         serial_product_ell(ell, x, k, y_s);
@@ -291,7 +292,7 @@ int main(int argc, char** argv) {
         serial_product_csr(csr, x, k, y_s);
 #endif
         clock_gettime(CLOCK_MONOTONIC, &t2);
-        gflops_s = get_gflops(t1, t2, flop);
+        gflops_s = GET_GFLOPS(t1, t2, flop);
     }
 
     //----------------------------------- Balancing and Communication ------------------------------------------- //
@@ -319,7 +320,7 @@ int main(int argc, char** argv) {
     MPI_Barrier(comm);
     if (rank == 0) {
         clock_gettime(CLOCK_MONOTONIC, &t2);
-        gflops_p = get_gflops(t1, t2, flop);
+        GET_GFLOPS(t1, t2, flop);
     }
 
 #ifdef ELLPACK

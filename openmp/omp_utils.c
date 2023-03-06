@@ -1,5 +1,63 @@
 #include "omp_utils.h"
 
+//TODO: what if the single row has more NZs than the ones to assign to the single thread? Try to divide by blocks
+
+//TODO: ordina le righe di ELL per numero di NZ
+void sort_rows(ELL* ell, int *idxs){
+    int idx = 0, prev_nz = 0, nz = 0, cols = ell->MAXNZ, rows = ell->M;
+    double *as = ell->AS;
+
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            if (as[i*cols + j] == 0) break;
+            nz++;
+        }
+
+        if (nz > prev_nz) { // put nz before prev_nz
+            idxs[idx++] = nz;
+            idxs[idx++] = prev_nz;
+        } else {
+            idxs[idx++] = prev_nz;
+            idxs[idx++] = nz;
+        }
+
+        nz = 0;
+    }
+}
+
+/**
+ * Load balancing related to the amount of non-zeros given to each computational node.
+ * The number of non-zeros is always rounded to be contained in a full row to maintain locality
+ *
+ * @param ts number of threads
+ * */
+int* ell_nz_balancing(int ts, ELL* ell, int* ordered_rows, int* rows_idx){
+    int t_nz, l_ctr, g_ctr = 0, nz_count = 0;
+    int rows = ell->M;
+    int nnz = ell->NZ;
+
+    sort_rows(ell, ordered_rows);
+
+    for (int i = 0; i < ts; i++) {
+        if (i == ts-1) { // if last thread, get the remaining rows
+            rows_idx[i] = rows-g_ctr;
+            break;
+        }
+
+        t_nz = (((i + 1) * nnz) / ts) - ((i * nnz) / ts); // compute the number of nz to assign the i-th thread
+
+        l_ctr = 0;
+        do{
+            nz_count += ordered_rows[g_ctr++];
+            l_ctr++;
+        }while (nz_count < t_nz && g_ctr < rows);
+
+        rows_idx[i] = l_ctr;
+    }
+
+    return rows_idx;
+}
+
 /**
  * Load balancing related to the amount of non-zeros given to each computational node.
  * The number of non-zeros is always rounded to be contained in a full row to maintain locality
@@ -10,7 +68,7 @@
  *      non-zeros are balanced on the number of processes that will operate the product
  *      inside every process - openmp threads will work on the given rows in parallel
  * */
-int* nz_balancing(int ts, int tot_nz, const int* irp, int tot_rows){
+int* csr_nz_balancing(int ts, int tot_nz, const int* irp, int tot_rows){
     int i, j, r1, nz, start_row = 0, r2 = 0;
 
     int* rows_idx = (int*) malloc((ts+1) * sizeof(int));

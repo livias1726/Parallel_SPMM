@@ -93,7 +93,7 @@ void alloc_struct(double**, int, int);
 void get_errors(int rows, int cols, double* seq, double* par, double* abs, double* rel);
 
 void serial_product_csr(CSR*, const double*, int, double*);
-void serial_product_ell(ELL, const double*, int, double*);
+void serial_product_ell(ELL*, const double*, int, double*);
 
 void print_matrix(double*, int, int, char*);
 void print_csr(CSR*);
