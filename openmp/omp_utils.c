@@ -1,8 +1,8 @@
 #include "omp_utils.h"
 
-//TODO: what if the single row has more NZs than the ones to assign to the single thread? Try to divide by blocks
-
-//TODO: ordina le righe di ELL per numero di NZ
+//TODO:
+// what if the single row has more NZs than the ones to assign to the single thread? Try to divide by blocks
+// ordina le righe di ELL per numero di NZ ??
 void sort_rows(ELL* ell, int *idxs){
     int idx = 0, prev_nz = 0, nz = 0, cols = ell->MAXNZ, rows = ell->M;
     double *as = ell->AS;

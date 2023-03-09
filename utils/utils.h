@@ -13,6 +13,7 @@
 #endif
 
 #define GET_GFLOPS(t1, t2, flop) ( flop / ((t2.tv_sec - t1.tv_sec) * 1.e9 + (t2.tv_nsec - t1.tv_nsec)) )
+#define Type double
 
 /**
  * Elem:
@@ -25,7 +26,7 @@
  * */
 typedef struct elem {
     int j;
-    double val;
+    Type val;
     int nz;
     struct elem* next;
 } Elem;
@@ -36,7 +37,7 @@ typedef struct elem {
  *
  * @param M number of rows
  * @param N number of cols
- * @param NZ number of non-zeros (necessary for mflops computation)
+ * @param NZ number of non-zeros
  * @param IRP array of row pointers: indexes of the values in AS that start a new row
  * @param JA array of non-zeros col indices
  * @param AS array of non-zero values
@@ -47,7 +48,7 @@ typedef struct csr {
     int NZ;
     int* IRP;
     int* JA;
-    double* AS;
+    Type* AS;
 } CSR;
 
 /**
@@ -55,7 +56,7 @@ typedef struct csr {
  *
  * @param M number of rows
  * @param N number of cols
- * @param NZ number of non-zeros (necessary for mflops computation)
+ * @param NZ number of non-zeros
  * @param MAXNZ max number of non-zeros in a row
  * @param JA 2D array of non-zeros col indices
  * @param AS 2D array of non-zero values
@@ -66,7 +67,7 @@ typedef struct ell {
     int NZ;
     int MAXNZ;
     int* JA;
-    double* AS;
+    Type* AS;
 } ELL;
 
 typedef struct hell {
@@ -75,26 +76,37 @@ typedef struct hell {
 } HELL;
 
 //-------------------------------------------------Functions signatures
-Elem** read_mm(FILE*, int*, int*, int*, const MM_typecode);
-CSR* read_mm_csr(Elem** elems, int m, int n, int nz);
-ELL* read_mm_ell(Elem** elems, int m, int n, int nz);
-CSR* alloc_csr(int, int, int);
-ELL* alloc_ell(Elem** elems, int, int, int, int*);
+// io
+void read_multivector(Type*, int, int);
+void save_result(Type*, int, int);
+void print_matrix(Type*, int, int, char*);
+void print_csr(CSR*);
+void print_ell(ELL*);
 
+// serial
+void serial_product_csr(CSR*, const Type*, int, Type*);
+void serial_product_ell(ELL*, const Type*, int, Type*);
+
+// storage
+Elem** read_mm(FILE*, int*, int*, int*, const MM_typecode);
+CSR* read_mm_csr(Elem**, int, int, int);
+ELL* read_mm_ell(Elem**, int, int, int);
+CSR* alloc_csr(int, int, int);
+ELL* alloc_ell(Elem**, int, int, int, int*);
+
+// utils
+void alloc_struct(Type**, int, int);
 void process_mm(MM_typecode*, FILE*);
 void malloc_handler(int, void**);
 void clean_up(int, void**);
-void populate_multivector(double*, int, int);
-void save_result(double*, int, int);
-void alloc_struct(double**, int, int);
+void populate_multivector(Type*, int, int);
+void get_errors(int, int, Type*, Type*, double*, double*);
 
-//double get_absolute_error(int, double*, double*);
-//double get_relative_error(int, double, double*);
-void get_errors(int rows, int cols, double* seq, double* par, double* abs, double* rel);
 
-void serial_product_csr(CSR*, const double*, int, double*);
-void serial_product_ell(ELL*, const double*, int, double*);
 
-void print_matrix(double*, int, int, char*);
-void print_csr(CSR*);
-void print_ell(ELL*);
+
+
+
+
+
+

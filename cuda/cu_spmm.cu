@@ -1,5 +1,6 @@
 #include "cu_utils.cuh"
 
+// -------------------------------------------- GPU Utils --------------------------------------------------- //
 __device__ double warp_reduce(double sum){
     // implementation of a logarithmic reduction with warp-level communication primitive
     for(int s = warpSize >> 1; s > 0; s >>= 1) {
@@ -9,6 +10,7 @@ __device__ double warp_reduce(double sum){
     return sum;
 }
 
+// --------------------------------------------- SpMM ----------------------------------------------------//
 /**
   * VECTOR KERNEL: 1 warp per matrix row
   *     - Coalesced memory accesses (labeled by warp index) to JA and AS, followed by a reduction phase.
@@ -18,7 +20,7 @@ __device__ double warp_reduce(double sum){
   * Note: if rows don't have more than 'warpSize' NZs each, no warp iterates more than once on the CSR arrays.
   *       Else, the order of summation differs from the scalar kernel (error accumulation).
   * */
-__device__ void product_csr_vector(const int *irp, const int *ja, const double *as, int start, int end,
+__device__ void spmm_csr_vector(const int *irp, const int *ja, const double *as, int start, int end,
                                    int k, const double* x, int sm_dim, double* y){
 
     // use of shared memory
@@ -62,7 +64,7 @@ __device__ void product_csr_vector(const int *irp, const int *ja, const double *
  * Inspired by Algorithm 3 of
  * 'Greathouse, Daga - Efficient Sparse Matrix-Vector Multiplication on GPUs using the CSR Storage Format'
  * */
-__device__ void product_csr_stream(const int *irp, const int *ja, const double *as, int row_start, int row_end,
+__device__ void spmm_csr_stream(const int *irp, const int *ja, const double *as, int row_start, int row_end,
                                    int k, const double* x, int sm_dim, double* y){
 
     int i;
@@ -99,7 +101,7 @@ __device__ void product_csr_stream(const int *irp, const int *ja, const double *
  *
  * Dynamically determines whether to execute a set of rows with the stream or the vector kernel.
  * */
-__global__ void product_csr_adaptive(const int *irp, const int *ja, const double *as, int k,
+__global__ void spmm_csr_adaptive_kernel(const int *irp, const int *ja, const double *as, int k,
                                      const double* x, int* blocks, int sm_dim, double* y) {
 
     int block_row_start = blocks[blockIdx.x];
@@ -107,22 +109,154 @@ __global__ void product_csr_adaptive(const int *irp, const int *ja, const double
     int rows = block_row_end - block_row_start;
 
     if (rows > MAX_NUM_ROWS) { // the rows are not so long: non-zeros can fit into the LDS
-        product_csr_stream(irp, ja, as, block_row_start, block_row_end, k, x, sm_dim, y);
+        spmm_csr_stream(irp, ja, as, block_row_start, block_row_end, k, x, sm_dim, y);
     } else { // the single row is too large to fit into the LDS with a streaming algorithm
-        product_csr_vector(irp, ja, as, block_row_start, block_row_end, k, x, sm_dim, y);
+        spmm_csr_vector(irp, ja, as, block_row_start, block_row_end, k, x, sm_dim, y);
     }
 }
+
+/**
+ * Ellpack SpMM kernel
+ *
+ * Each block is given a subset of rows in A (using AS and JA) and a subset of columns of x.
+ * To completely cover A's rows, blocks will eventually need to iterate horizontally on AS and JA and accumulate products.
+ *
+ * Each thread in a block is responsible for a single non-zero in A and uses x values
+ * (in the specific block stored in shared memory) to compute the partial product to accumulate on the row -->
+ * */
+
+ // TODO: version 1 --> customized test
+__global__ void spmm_ell_kernel_1(unsigned int rows, unsigned int maxnz, const int *ja, const Type *as, const Type *x,
+                                  unsigned int k, Type* y){
+
+    const int bdx = blockDim.x, bdy = blockDim.y;
+
+    // blocks with the same bx treats the same rows of A
+    const int bx = blockIdx.x; // gives the row block of A --> as and ja
+    // blocks with the same by treats the same columns of x
+    const int z = blockIdx.y; // gives the column of x the block is responsible for --> y[][z]
+
+    //blockDim.x * (blockIdx.x + blockIdx.y*gridDim.x) + threadIdx.x;
+    const int i = threadIdx.x + (bdx * bx); // global row of the thread
+    if (i >= rows) return;
+    const int col = threadIdx.y; // thread's column in AS and JA --> to retrieve correct column idx
+
+    //printf("BX: %d, BY: %d, TX: %d, TY: %d, GlobalTX: %d\n", bx, z, threadIdx.x, col, i);
+
+    Type nz_val, temp = 0.0;
+
+    int idx, j;
+    for (int jj = col; jj < maxnz; jj += bdy) {
+        idx = i*maxnz + jj;
+
+        nz_val = as[idx];
+        if (nz_val == 0) break;
+
+        j = ja[idx];
+        temp += __dmul_rn(nz_val, x[j*k + z]);
+    }
+    __syncthreads();
+
+    y[i*k + z] = temp;
+}
+
+// TODO: version 2 --> CUDA Programming Guide
+/*
+__global__ void spmm_ell_kernel_2(const int rows, const int cols, const int maxnz, const int stride, const int *ja,
+                                  const double *as, const double *x, const int k, double* y) {
+
+    int blockRow = blockIdx.y, blockCol = blockIdx.x;
+
+    // each thread block computes one sub-matrix of y
+    Matrix l_y = GetSubMatrix(y, blockRow, blockCol);
+
+    // each thread computes one element of l_y by accumulating results into temp
+    Type temp = 0.0;
+
+    // thread row and column within l_y
+    int row = threadIdx.y, col = threadIdx.x;
+
+    // load sub-matrix of x
+    l_x;
+
+    // loop over all the sub-matrices of as/ja and x that are required to compute l_y
+    // multiply each pair of sub-matrices together and accumulate the results
+    for (int m = 0; m < (maxnz / BD); ++m) {
+        // Get sub-matrix Asub of A
+        Matrix l_as = GetSubMatrix(A, blockRow, m);
+        // Get sub-matrix Bsub of B
+        Matrix Bsub = GetSubMatrix(B, m, blockCol);
+
+        // Shared memory used to store Asub and Bsub respectively
+        __shared__ float As[BLOCK_SIZE][BLOCK_SIZE];
+        __shared__ float Bs[BLOCK_SIZE][BLOCK_SIZE];
+
+        // Load Asub and Bsub from device memory to shared memory
+        // Each thread loads one element of each sub-matrix
+        As[row][col] = GetElement(Asub, row, col);
+        Bs[row][col] = GetElement(Bsub, row, col);
+
+        // Synchronize to make sure the sub-matrices are loaded
+        // before starting the computation
+        __syncthreads();
+
+        // Multiply Asub and Bsub together
+        for (int e = 0; e < BLOCK_SIZE; ++e) {
+            Cvalue += As[row][e] * Bs[e][col];
+        }
+
+        // Synchronize to make sure that the preceding
+        // computation is done before loading two new
+        // sub-matrices of A and B in the next iteration
+        __syncthreads();
+    }
+
+    // Write Csub to device memory
+    // Each thread writes one element
+    SetElement(Csub, row, col, Cvalue);
+}
+ */
+
+// TODO: version 3 --> spmv for ellpack
+/*
+__global__ void spmm_ell_kernel_3(const int rows, const int cols, const int maxnz, const int stride, const int *ja,
+                                  const Type *as, const Type *x, const int k, Type* y){
+
+    int i = blockDim.x * (blockIdx.x + blockIdx.y*gridDim.x) + threadIdx.x;
+
+    if (i >= rows) return;
+
+    Type temp = 0.0;
+
+    // shift to thread base in JA and AS
+    ja += i;
+    as += i;
+
+    for (int j = 0; j < maxnz; j++) {
+        int pointer = ja[0] - firstIndex;
+        double value = as[0];
+
+        temp += __dmul_rn(value, x[pointer]);
+
+        ja += pitch;
+        as += pitch;
+    }
+
+    y[i] = temp;
+}
+ */
 
 int main(int argc, char** argv) {
     // host
     MM_typecode t;
     FILE *f;
     CSR *csr;
-    int k, m, n, nz;
-    double gflops_s, gflops_p, abs_err, rel_err;
-    double *x, *y_s, *y_p, flop;
+    ELL *ell;
+    int k, m, n, nz, maxnz;
+    double flop, gflops_s, gflops_p, abs_err, rel_err;
+    Type *x, *y_s, *y_p;
     // device
-    double *d_x, *d_y, *d_as;
+    Type *d_x, *d_y, *d_as;
     int *d_irp, *d_ja;
 
     // ----------------------- Set Up ------------------------------------------- //
@@ -140,15 +274,18 @@ int main(int argc, char** argv) {
 #ifdef ELLPACK
     //TODO: manage H-Ellpack
     ell = read_mm_ell(elems, m, n, nz);
+    maxnz = ell->MAXNZ;
     #ifdef DEBUG
-    print_ell(ell);
+        print_ell(ell);
     #endif
-    //TODO: allocCudaEll()
+
+    alloc_cuda_ell(ell, &d_ja, &d_as);
 #else
     csr = read_mm_csr(elems, m, n, nz);
     #ifdef DEBUG
-    print_csr(csr);
+        print_csr(csr);
     #endif
+
     alloc_cuda_csr(csr, &d_irp, &d_ja, &d_as);
 #endif
 
@@ -182,38 +319,39 @@ int main(int argc, char** argv) {
     gflops_s = (double)flop/((timer->getTime())*1.e6);
     timer->reset();
     // --------------------------------------------- GPU SpMM -------------------------------------------------- //
-
     // pre-processing
     checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte)); //to avoid bank conflicts since double values are used
 
+    // Compute BLOCK_DIM --> each block works on a sub-matrix of A (bdy x n) and a sub-matrix of x (n x bdx)
+    dim3 BLOCK_DIM;
+    dim3 GRID_DIM;
+    int shared_mem;
+
 #ifdef ELLPACK
-    //TODO
-#else
-
-     // ADAPTIVE
-    int *d_blocks, *blocks, num_blocks, max_nz;
-
-    // compute #rows per block
-    blocks = (int*)malloc(m*sizeof(int));
-    //malloc_handler(1, (void*[]){blocks});
-    num_blocks = get_csr_row_blocks(m, csr->IRP, blocks, &max_nz);
-    checkCudaErrors(cudaMalloc((void**) &d_blocks, num_blocks*sizeof(int)));
-    checkCudaErrors(cudaMemcpy(d_blocks, blocks, num_blocks*sizeof(int), cudaMemcpyHostToDevice));
-
-    // compute shared memory dimension
-    const int shared_mem = get_shared_memory(max_nz, k);
-    if (shared_mem == -1) {
-        printf("TOO MANY NZ\n");
-        cudaDeviceReset();
-    }
-    const dim3 BLOCK_DIM = dim3(BDX);
-    const dim3 GRID_DIM = dim3(num_blocks-1);
+    compute_ell_dimensions(m, maxnz, k, &BLOCK_DIM, &GRID_DIM, &shared_mem);
 
     // product
     timer->start();
-    product_csr_adaptive<<<GRID_DIM, BLOCK_DIM, shared_mem>>>(d_irp, d_ja, d_as, k, d_x, d_blocks, shared_mem/2, d_y);
+    spmm_ell_kernel_1<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, maxnz, d_ja, d_as, d_x, k, d_y);
+    checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
     timer->stop();
+#else
+    // ADAPTIVE
+    int *d_blocks, *blocks, num_blocks, max_nz;
+    blocks = (int*)malloc(m*sizeof(int));
+    malloc_handler(1, (void*[]){blocks});
+
+    compute_csr_dimensions(m, k, csr->IRP, blocks, &num_blocks, &BLOCK_DIM, &GRID_DIM, &shared_mem);
+    checkCudaErrors(cudaMalloc((void**) &d_blocks, num_blocks*sizeof(int)));
+    checkCudaErrors(cudaMemcpy(d_blocks, blocks, num_blocks*sizeof(int), cudaMemcpyHostToDevice));
+
+    // product
+    timer->start();
+    spmm_csr_adaptive_kernel<<<GRID_DIM, BLOCK_DIM, shared_mem>>>(d_irp, d_ja, d_as, k, d_x, d_blocks, shared_mem/2, d_y);
+    checkCudaErrors(cudaDeviceSynchronize());
+    timer->stop();
+
 #endif
 
     gflops_p = (double)flop/((timer->getTime())*1.e6);
@@ -222,6 +360,14 @@ int main(int argc, char** argv) {
     // check results
     // --> relative error should be as close as possible to 2.22e−16 (IEEE double precision unit roundoff)
     get_errors(m, k, y_s, y_p, &abs_err, &rel_err);
+
+#ifdef SAVE
+    save_result(y_p, m, k);
+#endif
+#ifdef DEBUG
+    print_matrix(y_s, m, k, "\nSerial Result:\n");
+    print_matrix(y_p, m, k, "\nParallel Result:\n");
+#endif
 
 // ------------------------------- Cleaning up ------------------------------ //
     delete timer;
@@ -233,10 +379,10 @@ int main(int argc, char** argv) {
     checkCudaErrors(cudaFree(d_irp));
     checkCudaErrors(cudaFree(d_ja));
     checkCudaErrors(cudaFree(d_as));
+    checkCudaErrors(cudaFree(d_blocks));
     delete[] csr;
 #endif
 
-    checkCudaErrors(cudaFree(d_blocks));
     checkCudaErrors(cudaFree(d_x));
     checkCudaErrors(cudaFree(d_y));
 

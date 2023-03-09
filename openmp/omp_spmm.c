@@ -16,6 +16,7 @@
  * @param k number of columns of x
  * @param y receives product results Mxk stored as 1D array
  * */
+ //TODO: test --> avoid cache conflicts and exploit 64 bytes at a time for each row
 void product_csr(CSR *mat, const int* rows_load, int threads, double* x, int k, double* y){
 
     int *irp = mat->IRP, *ja = mat->JA;
@@ -77,7 +78,9 @@ void product_ell(ELL* mat, int threads, double* x, int k, double* y){
     int z, nz_idx;
     double *x_r, val, *t;
 
-    #pragma omp parallel for num_threads(threads) private(t, nz_idx, val, x_r, z) shared(maxnz, rows, ja, as, k, x, y) default(none)
+    #pragma omp parallel for num_threads(threads) \
+                                private(t, nz_idx, val, x_r, z) \
+                                shared(maxnz, rows, ja, as, k, x, y) default(none)
     for (int i = 0; i < rows; i++) {
         t = &y[i*k]; // prefetching of the row to update;
 

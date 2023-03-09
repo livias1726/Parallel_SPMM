@@ -1,6 +1,6 @@
 #include "utils.h"
 
-void read_multivector(double* vec, int rows, int cols) {
+void read_multivector(Type* vec, int rows, int cols) {
     int i,j;
     double fl = 0;
 
@@ -14,7 +14,7 @@ void read_multivector(double* vec, int rows, int cols) {
     fclose(f);
 }
 
-void save_result(double* y, int rows, int cols) {
+void save_result(Type* y, int rows, int cols) {
     int i, j;
 
     FILE *f = fopen("result.txt", "w");
@@ -27,7 +27,7 @@ void save_result(double* y, int rows, int cols) {
     fclose(f);
 }
 
-void print_matrix(double* mat, int rows, int cols, char* msg){
+void print_matrix(Type* mat, int rows, int cols, char* msg){
     fprintf(stdout, "%s", msg);
     for (int i=0; i < rows; i++) {
         for (int j=0; j < cols; j++) {

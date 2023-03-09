@@ -13,7 +13,9 @@ extern "C" {
 #endif
 
 // CUSTOM
-#define BDX 256 //TODO use a dynamic dimension wrt the number of NZs
+#define BDX 32
+#define BDY 32
+#define BD 32
 #define MAX_NUM_ROWS 1 // delta number of rows for the Vector kernel computation
 
 // PER DEVICE
@@ -25,10 +27,15 @@ extern "C" {
 // UTILS
 #define FULL_WARP_MASK 0xFFFFFFFF
 #define GET_MAX(a, b) if (a < b) {a = b;}
+#define GET_SUP_INT(x, y) (x%y != 0) ? x/y + 1 : x/y;
 
 //--------------------------------------------- Signatures ---------------------------------------------------------//
 void process_arguments(int argc, char **argv, FILE **f, int *k);
+void compute_ell_dimensions(int m, int maxnz, int k, dim3* BLOCK_DIM, dim3* GRID_DIM, int *shared_mem);
+void compute_csr_dimensions(int m, int k, int *irp, int* blocks, int *num_blocks,
+                            dim3* BLOCK_DIM, dim3* GRID_DIM, int *shared_mem);
 int get_csr_row_blocks(int rows, int *irp, int *blocks, int* max_nz);
 int get_shared_memory(int, int);
-void alloc_cuda_csr(CSR *csr, int **d_irp, int **d_ja, double **d_as);
-void alloc_cuda_spmm(double **d_x, double **d_y, const double *x, int m, int n, int k);
+void alloc_cuda_csr(CSR *csr, int **d_irp, int **d_ja, Type **d_as);
+void alloc_cuda_ell(ELL* ell, int **d_ja, Type **d_as);
+void alloc_cuda_spmm(Type **d_x, Type **d_y, const Type *x, int m, int n, int k);

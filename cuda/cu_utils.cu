@@ -105,24 +105,75 @@ int get_shared_memory(int max, int k){
     }
 }
 
-void alloc_cuda_csr(CSR* csr, int **d_irp, int **d_ja, double **d_as){
-    int m = csr->M, nz = csr->NZ;
+void alloc_cuda_csr(CSR* csr, int **d_irp, int **d_ja, Type **d_as){
+    int m = csr->M;
+    int nz = csr->NZ;
+    int size_irp = (m+1)*sizeof(int);
+    int size_ja = nz*sizeof(int);
+    int size_as = nz*sizeof(Type);
+
     int *irp = csr->IRP, *ja = csr->JA;
-    double *as = csr->AS;
+    Type *as = csr->AS;
 
-    checkCudaErrors(cudaMalloc((void**) d_irp, (m+1)*sizeof(int)));
-    checkCudaErrors(cudaMalloc((void**) d_ja, nz*sizeof(int)));
-    checkCudaErrors(cudaMalloc((void**) d_as, nz*sizeof(double)));
+    checkCudaErrors(cudaMalloc((void**) d_irp, size_irp));
+    checkCudaErrors(cudaMalloc((void**) d_ja, size_ja));
+    checkCudaErrors(cudaMalloc((void**) d_as, size_as));
 
-    checkCudaErrors(cudaMemcpy(*d_irp, irp, (m+1)*sizeof(int), cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy(*d_ja, ja, nz*sizeof(int), cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy(*d_as, as, nz*sizeof(double), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(*d_irp, irp, size_irp, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(*d_ja, ja, size_ja, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(*d_as, as, size_as, cudaMemcpyHostToDevice));
 }
 
-void alloc_cuda_spmm(double **d_x, double **d_y, const double *x, int m, int n, int k){
+void alloc_cuda_ell(ELL* ell, int **d_ja, Type **d_as){
+    int m = ell->M;
+    int maxnz = ell->MAXNZ;
+    int size_ja = (m*maxnz)*sizeof(int);
+    int size_as = (m*maxnz)*sizeof(Type);
 
-    checkCudaErrors(cudaMalloc((void**) d_x, n * k * sizeof(double)));
-    checkCudaErrors(cudaMalloc((void**) d_y, m * k * sizeof(double)));
+    int *ja = ell->JA;
+    Type *as = ell->AS;
 
-    checkCudaErrors(cudaMemcpy(*d_x, x,  n * k * sizeof(double), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMalloc((void**) d_ja, size_ja));
+    checkCudaErrors(cudaMalloc((void**) d_as, size_as));
+
+    checkCudaErrors(cudaMemcpy(*d_ja, ja, size_ja, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(*d_as, as, size_as, cudaMemcpyHostToDevice));
 }
+
+void alloc_cuda_spmm(Type **d_x, Type **d_y, const Type *x, int m, int n, int k){
+
+    int size_partial = k * sizeof(Type);
+    int size_x = n * size_partial;
+
+    checkCudaErrors(cudaMalloc((void**) d_x, size_x));
+    checkCudaErrors(cudaMemcpy(*d_x, x,  size_x, cudaMemcpyHostToDevice));
+
+    checkCudaErrors(cudaMalloc((void**) d_y, (m*size_partial)));
+}
+
+void compute_csr_dimensions(int m, int k, int *irp, int* blocks, int *num_blocks,
+                            dim3* BLOCK_DIM, dim3* GRID_DIM, int *shared_mem){
+
+    int max_nz;
+    *num_blocks = get_csr_row_blocks(m, irp, blocks, &max_nz);
+
+    // compute shared memory dimension
+    *shared_mem = get_shared_memory(max_nz, k);
+    if (*shared_mem == -1) {
+        printf("TOO MANY NZ\n");
+        cudaDeviceReset();
+    }
+    *BLOCK_DIM = dim3(BD);
+    *GRID_DIM = dim3(*num_blocks-1);
+}
+
+void compute_ell_dimensions(int m, int maxnz, int k,
+                            dim3* BLOCK_DIM, dim3* GRID_DIM, int *shared_mem){
+    // 2D BLOCKS
+    *BLOCK_DIM = dim3(BDX,BDY);
+
+    const int gdx = GET_SUP_INT(m,BDX)
+    *GRID_DIM = dim3(gdx, k);
+    //*shared_mem = m*k*sizeof(Type);
+}
+

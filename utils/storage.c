@@ -1,13 +1,6 @@
 #include "utils.h"
 
-/**
- * Add an element representing a non-zero read from file to the list
- * of the respective row
- *
- * @param arr array of list heads
- * @param node pointer to the new element
- * @param idx index of the row of the element
- * */
+/* adds an element representing a non-zero read from file to the list of the respective row */
 void insert_in_row(Elem** arr, Elem* node, int idx) {
     Elem* head = arr[idx];
 
@@ -156,7 +149,7 @@ CSR* alloc_csr(int m, int n, int nz){
 
     mat->IRP = (int*)malloc((m+1)*sizeof(int));
     mat->JA = (int*)malloc(nz*sizeof(int));
-    mat->AS = (double*)malloc(nz*sizeof(double));
+    mat->AS = (Type*)malloc(nz*sizeof(Type));
     malloc_handler(3, (void* []) {mat->IRP, mat->JA, mat->AS});
 
     // populate CSR format
@@ -182,7 +175,7 @@ ELL* alloc_ell(Elem** elems, int m, int n, int nz, int* maxnz){
     // calloc is used to avoid the addition of padding in a loop
     // 2D arrays are treated as 1D arrays
     mat->JA = calloc(m*(*maxnz), sizeof(int));
-    mat->AS = (double*)calloc(m*(*maxnz), sizeof(double));
+    mat->AS = (Type*)calloc(m*(*maxnz), sizeof(Type));
     malloc_handler(2, (void* []) {mat->JA, mat->AS});
 
     // populate ELLPACK format
