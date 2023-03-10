@@ -1,4 +1,4 @@
-#include "utils.h"
+#include "headers/utils.h"
 
 /* adds an element representing a non-zero read from file to the list of the respective row */
 void insert_in_row(Elem** arr, Elem* node, int idx) {

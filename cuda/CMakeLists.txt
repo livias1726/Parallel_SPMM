@@ -10,12 +10,20 @@ set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS};-DSM_${CC};-arch=sm_${CC};-lineinfo;-Xcom
 
 enable_language(CUDA)
 
-set(UTILS_SRC ${UTILS_SRC} cu_utils.cu)
-
 if (QUERY)
     cuda_add_executable(deviceQuery deviceQuery.cpp)
-elseif(PERFORMANCE)
-    #add_executable(cu_test cu_test.cu ${UTILS_SRC})
+endif()
+
+set(UTILS_SRC ${UTILS_SRC} cu_utils.cu)
+if (ELLPACK)
+    set(UTILS_SRC ${UTILS_SRC} cu_ell.cu)
+else()
+    set(UTILS_SRC ${UTILS_SRC} cu_csr.cu)
+endif()
+
+if(PERFORMANCE)
+    add_executable(cu_test cu_test.cu ${UTILS_SRC})
 else ()
     add_executable(cu_spmm cu_spmm.cu ${UTILS_SRC})
+    set_property(TARGET cu_spmm PROPERTY CUDA_ARCHITECTURES 75)
 endif()

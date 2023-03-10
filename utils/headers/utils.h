@@ -6,7 +6,7 @@
 #include <string.h>
 #include <errno.h>
 #include <limits.h>
-#include "../lib/mmio.h"
+#include "../../lib/mmio.h"
 
 #ifndef SCPA_PROJECT_UTILS_H
     #define SCPA_PROJECT_UTILS_H

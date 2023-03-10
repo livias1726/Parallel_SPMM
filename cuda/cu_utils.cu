@@ -1,4 +1,4 @@
-#include "cu_utils.cuh"
+#include "headers/cu_utils.cuh"
 
 void process_arguments(int argc, char** argv, FILE **f, int* k){
     if (argc < 3){
@@ -124,22 +124,6 @@ void alloc_cuda_csr(CSR* csr, int **d_irp, int **d_ja, Type **d_as){
     checkCudaErrors(cudaMemcpy(*d_as, as, size_as, cudaMemcpyHostToDevice));
 }
 
-void alloc_cuda_ell(ELL* ell, int **d_ja, Type **d_as){
-    int m = ell->M;
-    int maxnz = ell->MAXNZ;
-    int size_ja = (m*maxnz)*sizeof(int);
-    int size_as = (m*maxnz)*sizeof(Type);
-
-    int *ja = ell->JA;
-    Type *as = ell->AS;
-
-    checkCudaErrors(cudaMalloc((void**) d_ja, size_ja));
-    checkCudaErrors(cudaMalloc((void**) d_as, size_as));
-
-    checkCudaErrors(cudaMemcpy(*d_ja, ja, size_ja, cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy(*d_as, as, size_as, cudaMemcpyHostToDevice));
-}
-
 void alloc_cuda_spmm(Type **d_x, Type **d_y, const Type *x, int m, int n, int k){
 
     int size_partial = k * sizeof(Type);
@@ -151,29 +135,14 @@ void alloc_cuda_spmm(Type **d_x, Type **d_y, const Type *x, int m, int n, int k)
     checkCudaErrors(cudaMalloc((void**) d_y, (m*size_partial)));
 }
 
-void compute_csr_dimensions(int m, int k, int *irp, int* blocks, int *num_blocks,
-                            dim3* BLOCK_DIM, dim3* GRID_DIM, int *shared_mem){
-
-    int max_nz;
-    *num_blocks = get_csr_row_blocks(m, irp, blocks, &max_nz);
-
-    // compute shared memory dimension
-    *shared_mem = get_shared_memory(max_nz, k);
-    if (*shared_mem == -1) {
-        printf("TOO MANY NZ\n");
-        cudaDeviceReset();
+__device__ Type warp_reduce(Type sum){
+    // implementation of a logarithmic reduction with warp-level communication primitive
+    for(int s = warpSize >> 1; s > 0; s >>= 1) {
+        sum += __shfl_down_sync(FULL_WARP_MASK, sum, s);
     }
-    *BLOCK_DIM = dim3(BD);
-    *GRID_DIM = dim3(*num_blocks-1);
+
+    return sum;
 }
 
-void compute_ell_dimensions(int m, int maxnz, int k,
-                            dim3* BLOCK_DIM, dim3* GRID_DIM, int *shared_mem){
-    // 2D BLOCKS
-    *BLOCK_DIM = dim3(BDX,BDY);
 
-    const int gdx = GET_SUP_INT(m,BDX)
-    *GRID_DIM = dim3(gdx, k);
-    //*shared_mem = m*k*sizeof(Type);
-}
 

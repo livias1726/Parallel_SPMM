@@ -1,4 +1,4 @@
-#include "utils.h"
+#include "headers/utils.h"
 
 void process_mm(MM_typecode* t, FILE *f){
     // process the first line of file and identify the matrix type

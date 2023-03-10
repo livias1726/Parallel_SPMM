@@ -1,5 +1,5 @@
 #include <omp.h>
-#include "../utils/utils.h"
+#include "../../utils/headers/utils.h"
 
 #ifndef SCPA_PROJECT_OMP_UTILS_H
     #define SCPA_PROJECT_OMP_UTILS_H
