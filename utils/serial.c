@@ -9,16 +9,21 @@
  * @param y receives product results Mxk stored as 1D array
  * */
 void serial_product_csr(CSR* mat, const Type* x, int k, Type* y){
-    int i, j, z, rows = mat->M, *irp = mat->IRP, *ja = mat->JA;
-    Type t, *as = mat->AS;
+    int m = mat->M, *irp = mat->IRP, *ja = mat->JA;
+    Type *as = mat->AS;
 
-    for (i = 0; i < rows; i++) {
-        for (z = 0; z < k; z++) {
-            t = 0.0;
-            for (j = irp[i]; j < irp[i+1]; j++) {
-                t += as[j]*(x[ja[j]*k+z]);
+    int ry, rx, j, z;
+    Type val;
+    for (int i = 0; i < m; i++) {
+        ry = i*k;
+
+        for (j = irp[i]; j < irp[i+1]; j++) {
+            val = as[j];
+            rx = ja[j]*k;
+
+            for (z = 0; z < k; z++) {
+                y[ry + z] += val * x[rx + z];
             }
-            y[i*k + z] = t;
         }
     }
 }
@@ -32,18 +37,23 @@ void serial_product_csr(CSR* mat, const Type* x, int k, Type* y){
  * @param y receives product results Mxk stored as 1D array
  * */
 void serial_product_ell(ELL* mat, const Type* x, int k, Type* y){
-    int i, j, z, maxnz = mat->MAXNZ, rows = mat->M, *ja = mat->JA;
-    Type t, val, *as = mat->AS;
+    int maxnz = mat->MAXNZ, m = mat->M, *ja = mat->JA;
+    Type *as = mat->AS;
 
-    for (i = 0; i < rows; i++) {
-        for (z = 0; z < k; z++) {
-            t = 0.0;
-            for (j = 0; j < maxnz; j++) { // TODO: try to use this as external loop
-                val = as[i*maxnz+j];
-                if (val == 0) break; // if padding is reached break loop
-                t += val * x[ja[i*maxnz+j]*k+z];
+    int ra, rx, ry, j, z;
+    Type val;
+    for (int i = 0; i < m; i++) {
+        ra = i*maxnz;
+        ry = i*k;
+
+        for (j = 0; j < maxnz; j++) {
+            val = as[ra+j];
+            if (val == 0) break; // if padding is reached break loop
+
+            rx = ja[ra+j]*k;
+            for (z = 0; z < k; z++) {
+                y[ry+z] += val * x[rx+z];
             }
-            y[i*k+z] = t;
         }
     }
 }

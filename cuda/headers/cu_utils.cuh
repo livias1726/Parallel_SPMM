@@ -12,17 +12,12 @@ extern "C"{
 #include "../../utils/headers/utils.h"
 };
 
-// CUSTOM
-#define BDX 32
-#define BDY 32
-#define BD 32
-#define MAX_NUM_ROWS 1 // delta number of rows for the Vector kernel computation
-
 // DEVICE
-#define MAX_THREADS_BLOCK 1024 // max number of threads per block
-#define SM_NUM 48 // number of available streaming multiprocessors
-#define MAX_THREADS SM_NUM*MAX_THREADS_BLOCK // max number of co-resident threads
-#define MAX_SHARED_MEM 49152 // max dimension of the shared memory per block on the specific device
+#define WARP_SIZE 32                        // number of threads in a warp
+#define MAX_THREADS_BLOCK 1024              // max number of threads per block
+#define SM 48                               // number of available streaming multiprocessors
+#define MAX_THREADS SM*MAX_THREADS_BLOCK    // max number of co-resident threads
+#define MAX_SHM 48*1024                     // max dimension of the shared memory per block on the specific device
 
 // UTILS
 #define FULL_WARP_MASK 0xFFFFFFFF
@@ -31,5 +26,4 @@ extern "C"{
 
 //--------------------------------------------- Signatures ---------------------------------------------------------//
 void process_arguments(int argc, char **argv, FILE **f, int *k);
-int get_shared_memory(int, int);
 void alloc_cuda_spmm(Type **d_x, Type **d_y, const Type *x, int m, int n, int k);

@@ -1,5 +1,14 @@
 #include "headers/cu_csr.cuh"
 
+//TODO: check error accumulation
+__device__ Type warp_reduce(Type sum){
+    // implementation of a logarithmic reduction with warp-level communication primitive
+    for(int s = warpSize >> 1; s > 0; s >>= 1) {
+        sum += __shfl_down_sync(FULL_WARP_MASK, sum, s);
+    }
+    return sum;
+}
+
 /**
   * VECTOR KERNEL: 1 warp per matrix row
   *     - Coalesced memory accesses (labeled by warp index) to JA and AS, followed by a reduction phase.
@@ -10,7 +19,7 @@
   *       Else, the order of summation differs from the scalar kernel (error accumulation).
   * */
 __device__ void spmm_csr_vector(const int *irp, const int *ja, const Type *as, int start, int end,
-                                int k, const Type* x, int sm_dim, Type* y){
+                                int k, const Type* x, Type* y){
 
     // use of shared memory
     extern __shared__ Type LDS[]; // used to write temporary product results
@@ -43,18 +52,16 @@ __device__ void spmm_csr_vector(const int *irp, const int *ja, const Type *as, i
 
 /**
  * STREAM KERNEL: streaming into the local scratchpad memory of a fixed number of non-zeros to assign each warp
- * - Coalesced loads
- * - Efficient utilization of the GPU's DRAM bandwidth
  *
  * Problems:
  *      - Loses efficiency when a warp operates on rows with a large number of NZs. --> vector kernel
  *      - Becomes inoperative if a row has more NZs than can be allocated in the scratchpad. --> TODO
  *
- * Inspired by Algorithm 3 of
- * 'Greathouse, Daga - Efficient Sparse Matrix-Vector Multiplication on GPUs using the CSR Storage Format'
+ * Inspired by Algorithm 3 of Greathouse and Daga's
+ * "Efficient Sparse Matrix-Vector Multiplication on GPUs using the CSR Storage Format"
  * */
 __device__ void spmm_csr_stream(const int *irp, const int *ja, const Type *as, int row_start, int row_end,
-                                int k, const Type* x, int sm_dim, Type* y){
+                                int k, const Type* x, Type* y){
 
     int i;
     int first_nz = irp[row_start];
@@ -90,32 +97,79 @@ __device__ void spmm_csr_stream(const int *irp, const int *ja, const Type *as, i
  *
  * Dynamically determines whether to execute a set of rows with the stream or the vector kernel.
  * */
-__global__ void spmm_csr_adaptive_kernel(const int *irp, const int *ja, const Type *as, int k,
-                                         const Type* x, int* blocks, int sm_dim, Type* y) {
+__global__ void spmm_csr_adaptive_kernel(const int *irp, const int *ja, const Type *as, int k, const Type* x,
+                                         int* blocks, Type* y) {
 
     int block_row_start = blocks[blockIdx.x];
     int block_row_end = blocks[blockIdx.x + 1];
     int rows = block_row_end - block_row_start;
 
     if (rows > MAX_NUM_ROWS) { // the rows are not so long: non-zeros can fit into the LDS
-        spmm_csr_stream(irp, ja, as, block_row_start, block_row_end, k, x, sm_dim, y);
+        spmm_csr_stream(irp, ja, as, block_row_start, block_row_end, k, x, y);
     } else { // the single row is too large to fit into the LDS with a streaming algorithm
-        spmm_csr_vector(irp, ja, as, block_row_start, block_row_end, k, x, sm_dim, y);
+        spmm_csr_vector(irp, ja, as, block_row_start, block_row_end, k, x, y);
     }
 }
 
-void compute_csr_dimensions(int m, int k, int *irp, int* blocks, int *num_blocks, dim3* BLOCK_DIM, dim3* GRID_DIM,
+/**
+ * Computes the number of rows to give each block (s.t. # NZ <= BD) and the total number of blocks to cover all rows.
+ * So that NZs can fit into LDS entries of size BDx.
+ *
+ * Inspired by Algorithm 2 of Greathouse and Daga's
+ * "Efficient Sparse Matrix-Vector Multiplication on GPUs using the CSR Storage Format".
+ *
+ * @param rows total number of rows in A
+ * @param irp row delimiters of CSR format
+ * @param blocks output array of row blocks
+ * */
+int get_csr_row_blocks(int bd, int rows, int* irp, int* rows_per_block){
+
+    int nz = 0, last_i = 0, ctr = 1;
+    rows_per_block[0] = 0;
+
+    for (int i = 1; i < rows; i++) {
+        nz += irp[i] - irp[i-1]; // count the sum of non-zeros in the considered rows
+
+        if (nz < bd) continue; // the block can process more non-zeros
+
+        if ((nz > bd) && (i - last_i > 1)) { // not enough space
+            // there are more non-zeros than threads in a block AND
+            // more than 1 row was scanned for the block: decrease number of rows for the block
+            i--;
+        }
+
+        last_i = i;
+        rows_per_block[ctr++] = i;
+        nz = 0;
+    }
+
+    rows_per_block[ctr++] = rows;
+    return ctr;
+}
+
+/**
+ * Computes the dimension of the dynamic shared memory to be used in each block.
+ * */
+int get_shared_memory(int bd){
+    int shm = bd*sizeof(Type); // one nz per thread
+    return shm;
+}
+
+void compute_csr_dimensions(int m, int nz, int k, int *irp, int* blocks, int *num_blocks, dim3* BLOCK_DIM, dim3* GRID_DIM,
                             int *shared_mem){
 
-    int max_nz;
-    *num_blocks = get_csr_row_blocks(m, irp, blocks, &max_nz);
+    // 1D block dimension
+    //int bd = nz + nz % WARP_SIZE; // first multiple of warp bigger than nz
+    int avg = GET_SUP_INT(nz,m) int bd = avg + WARP_SIZE - avg%WARP_SIZE;
+    if (bd > MAX_THREADS_BLOCK) bd = MAX_THREADS_BLOCK;
+    *BLOCK_DIM = dim3(bd);
+
+    // compute row balancing on blocks
+    *num_blocks = get_csr_row_blocks(bd, m, irp, blocks);
 
     // compute shared memory dimension
-    *shared_mem = get_shared_memory(max_nz, k);
-    if (*shared_mem == -1) {
-        printf("TOO MANY NZ\n");
-        cudaDeviceReset();
-    }
-    *BLOCK_DIM = dim3(BD);
+    *shared_mem = bd * sizeof(Type); //get_shared_memory(bd);
+
+    // set block grid dimension to spawn 'num_blocks' blocks
     *GRID_DIM = dim3(*num_blocks-1);
 }

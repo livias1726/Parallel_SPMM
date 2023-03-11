@@ -15,6 +15,7 @@ if (QUERY)
 endif()
 
 set(UTILS_SRC ${UTILS_SRC} cu_utils.cu)
+
 if (ELLPACK)
     set(UTILS_SRC ${UTILS_SRC} cu_ell.cu)
 else()

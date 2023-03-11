@@ -64,6 +64,7 @@ void compute_ell_dimensions(int m, int maxnz, int k,
     *BLOCK_DIM = dim3(BDX,BDY);
 
     const int gdx = GET_SUP_INT(m,BDX)
-                    *GRID_DIM = dim3(gdx, k);
+
+    *GRID_DIM = dim3(gdx, k);
     *shared_mem = BDX*BDY*sizeof(Type);
 }

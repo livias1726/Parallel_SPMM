@@ -70,11 +70,6 @@ typedef struct ell {
     Type* AS;
 } ELL;
 
-typedef struct hell {
-    int dim; // dimension of hacks array
-    ELL** hacks; // array of ELL pointers
-} HELL;
-
 //-------------------------------------------------Functions signatures
 // io
 void read_multivector(Type*, int, int);

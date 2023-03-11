@@ -138,7 +138,7 @@ ELL* read_mm_ell(Elem** elems, int m, int n, int nz){
         count = 0;
     }
 
-    free(elems);
+    //free(elems);
     return mat;
 }
 
