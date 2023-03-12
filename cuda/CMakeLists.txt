@@ -11,7 +11,7 @@ set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS};-DSM_${CC};-arch=sm_${CC};-lineinfo;-Xcom
 enable_language(CUDA)
 
 if (QUERY)
-    cuda_add_executable(deviceQuery deviceQuery.cpp)
+    cuda_add_executable(deviceQuery scripts/deviceQuery.cpp)
 endif()
 
 set(UTILS_SRC ${UTILS_SRC} cu_utils.cu)

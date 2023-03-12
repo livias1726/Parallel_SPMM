@@ -1,6 +1,5 @@
 #include "headers/cu_csr.cuh"
 
-//TODO: check error accumulation
 __device__ Type warp_reduce(Type sum){
     // implementation of a logarithmic reduction with warp-level communication primitive
     for(int s = warpSize >> 1; s > 0; s >>= 1) {
@@ -9,83 +8,105 @@ __device__ Type warp_reduce(Type sum){
     return sum;
 }
 
+__device__ Type sub_reduce(unsigned mask, int size, Type sum){
+    // implementation of a logarithmic reduction with warp-level communication primitive
+    for(int s = size >> 1; s > 0; s >>= 1) {
+        sum += __shfl_down_sync(mask, sum, s);
+    }
+    return sum;
+}
+
 /**
-  * VECTOR KERNEL: 1 warp per matrix row
-  *     - Coalesced memory accesses (labeled by warp index) to JA and AS, followed by a reduction phase.
-  *
-  * Problems: efficient execution demands a number of NZs per row greater than the warp size.
-  *
-  * Note: if rows don't have more than 'warpSize' NZs each, no warp iterates more than once on the CSR arrays.
-  *       Else, the order of summation differs from the scalar kernel (error accumulation).
+  * VECTOR KERNEL: 1 warp per matrix row.
   * */
+  //TODO: manage case k > warpSize
+  // --> increase LDS by a factor of ceil(k/warpSize)
+  // ----> with bd=MAX, needed a k x7 bigger (> 192) than warpSize to reach over MAX_SHM
+  // --> each thread in the 'sub_warp' uses ceil(k/warpSize) consecutive cells in LDS to store accumulation
+  // --> reduction needs to take into account this stride (ceil(k/warpSize))
 __device__ void spmm_csr_vector(const int *irp, const int *ja, const Type *as, int start, int end,
                                 int k, const Type* x, Type* y){
 
     // use of shared memory
     extern __shared__ Type LDS[]; // used to write temporary product results
 
-    int tx = threadIdx.x;
-    int twid = tx & (warpSize-1); // thread index within the warp
-    int wid = tx/warpSize; // warp index within the block
-    int num_warps = blockDim.x/warpSize; // number of warps in block
+    int tid_b = threadIdx.x;
+    int tid_w = tid_b % warpSize;
 
-    for (int i = start+wid; i < end; i += num_warps) { // each warp in the block is given a row
-        int s_idx = irp[i];
-        int e_idx = irp[i+1];
+    int sub_warps = warpSize/k;
+    int swid = tid_w / k; // sub warp id
+    int tid_sw = tid_b % k; // thread index within the sub warp
 
-        for (int z = 0; z < k; z++) {
-            // compute partial products
-            LDS[tx] = 0.0;
-            for (int j = s_idx + twid; j < e_idx; j += warpSize) { // each thread in the warp operates on a single nz of the row
-                LDS[tx] += as[j] * x[ja[j] * k + z];
-            }
-            __syncthreads();
+    int wid = tid_b / warpSize; // warp index within the block
+    int num_warps = blockDim.x / warpSize; // number of warps in block
 
-            LDS[tx] = warp_reduce(LDS[tx]);
+    int j, r_y, sj, ej;
+    Type val_a, val_x;
+    for (int i = start + wid; i < end; i += num_warps) { // warp takes the row
+        r_y = i * k;
+        sj = irp[i];
+        ej = irp[i+1];
 
-            // first thread writes warp result
-            if (twid == 0) y[i * k + z] = LDS[tx];
-            __syncthreads();
+        LDS[tid_b] = 0.0;
+        for (j = sj + swid; j < ej; j += sub_warps) { // sub warp takes the non-zero
+            val_a = as[j];
+            val_x = x[ja[j] * k + tid_sw]; // thread in sub warp takes the specific value of x
+
+            LDS[tid_b] += val_a * val_x;
         }
+        __syncwarp();
+
+        // reduction
+        /*
+        for (z = 0; z < k; z++) {
+            unsigned mask = __ballot_sync(FULL_WARP_MASK, tid_sw == z);
+            LDS[tid_b] = sub_reduce(mask, sub_warps, LDS[tid_b]);
+        }
+         */
+        if (swid == 0) {
+            for (int sw = 1; sw < sub_warps; sw++) {
+                LDS[tid_b] += LDS[tid_b + k * sw];
+            }
+        }
+        __syncwarp();
+
+        // first thread writes result
+        if (swid == 0) y[r_y + tid_sw] = LDS[tid_b];
+        __syncwarp();
     }
 }
 
 /**
  * STREAM KERNEL: streaming into the local scratchpad memory of a fixed number of non-zeros to assign each warp
- *
- * Problems:
- *      - Loses efficiency when a warp operates on rows with a large number of NZs. --> vector kernel
- *      - Becomes inoperative if a row has more NZs than can be allocated in the scratchpad. --> TODO
- *
- * Inspired by Algorithm 3 of Greathouse and Daga's
- * "Efficient Sparse Matrix-Vector Multiplication on GPUs using the CSR Storage Format"
+ * - Becomes inoperative if a row has more NZs than can be allocated in the scratchpad. --> TODO
  * */
 __device__ void spmm_csr_stream(const int *irp, const int *ja, const Type *as, int row_start, int row_end,
                                 int k, const Type* x, Type* y){
 
-    int i;
+    int i, j;
     int first_nz = irp[row_start];
     int tot_nz = irp[row_end] - first_nz;
 
     extern __shared__ Type LDS[]; // it must be reused for every column of x to avoid overflowing available memory
 
-    int tid_block = threadIdx.x;
-    int thread_nz = first_nz + tid_block;
+    int tid_b = threadIdx.x;
+    int thread_nz = first_nz + tid_b;
+
+    Type tmp, val = as[thread_nz];
+    int r_x = ja[thread_nz] * k;
 
     for (int z = 0; z < k; z++) {
-        // stream the first iteration of SpMM into LDS using l_tid to shift on the values
-        if (tid_block < tot_nz) LDS[tid_block] = as[thread_nz] * x[ja[thread_nz]*k + z]; // efficient bandwidth usage
+        // stream the first iteration of SpMM into LDS
+        if (tid_b < tot_nz) LDS[tid_b] = val * x[r_x + z];
         __syncthreads();
 
         // Linear reduction: sum up the partial results --> may leave some threads idle
-        for (i = row_start + tid_block; i < row_end; i += blockDim.x){
-            double temp = 0.0;
-
-            for (int j = (irp[i]-first_nz); j < (irp[i + 1]-first_nz); j++){
-                temp += LDS[j];
+        for (i = row_start + tid_b; i < row_end; i += blockDim.x){
+            tmp = 0.0;
+            for (j = (irp[i]-first_nz); j < (irp[i + 1]-first_nz); j++){
+                tmp += LDS[j];
             }
-
-            y[i*k + z] = temp;
+            y[i*k + z] = tmp;
         }
         __syncthreads();
     }
@@ -93,9 +114,10 @@ __device__ void spmm_csr_stream(const int *irp, const int *ja, const Type *as, i
 
 
 /**
- * CSR Adaptive SpMM
+ * CSR Adaptive SpMM: dynamically determines whether to execute a set of rows with the stream or the vector kernel.
  *
- * Dynamically determines whether to execute a set of rows with the stream or the vector kernel.
+ * Inspired by Algorithm 3 of Greathouse and Daga's
+ * "Efficient Sparse Matrix-Vector Multiplication on GPUs using the CSR Storage Format"
  * */
 __global__ void spmm_csr_adaptive_kernel(const int *irp, const int *ja, const Type *as, int k, const Type* x,
                                          int* blocks, Type* y) {
@@ -104,11 +126,14 @@ __global__ void spmm_csr_adaptive_kernel(const int *irp, const int *ja, const Ty
     int block_row_end = blocks[blockIdx.x + 1];
     int rows = block_row_end - block_row_start;
 
+    spmm_csr_vector(irp, ja, as, block_row_start, block_row_end, k, x, y);
+    /*
     if (rows > MAX_NUM_ROWS) { // the rows are not so long: non-zeros can fit into the LDS
         spmm_csr_stream(irp, ja, as, block_row_start, block_row_end, k, x, y);
     } else { // the single row is too large to fit into the LDS with a streaming algorithm
         spmm_csr_vector(irp, ja, as, block_row_start, block_row_end, k, x, y);
     }
+     */
 }
 
 /**
@@ -158,18 +183,23 @@ int get_shared_memory(int bd){
 void compute_csr_dimensions(int m, int nz, int k, int *irp, int* blocks, int *num_blocks, dim3* BLOCK_DIM, dim3* GRID_DIM,
                             int *shared_mem){
 
-    // 1D block dimension
-    //int bd = nz + nz % WARP_SIZE; // first multiple of warp bigger than nz
-    int avg = GET_SUP_INT(nz,m) int bd = avg + WARP_SIZE - avg%WARP_SIZE;
+    int bd, gd;
+
+    // 1D block dimension --> 512 seems feasible for biggest matrices
+    int avg = nz/m;
+    bd = avg + WARP_SIZE - avg%WARP_SIZE; //bd = nz + WARP_SIZE - nz%WARP_SIZE;
     if (bd > MAX_THREADS_BLOCK) bd = MAX_THREADS_BLOCK;
     *BLOCK_DIM = dim3(bd);
 
     // compute row balancing on blocks
-    *num_blocks = get_csr_row_blocks(bd, m, irp, blocks);
+    gd = get_csr_row_blocks(bd, m, irp, blocks);
+    *num_blocks = gd;
 
     // compute shared memory dimension
     *shared_mem = bd * sizeof(Type); //get_shared_memory(bd);
 
     // set block grid dimension to spawn 'num_blocks' blocks
-    *GRID_DIM = dim3(*num_blocks-1);
+    *GRID_DIM = dim3(gd-1);
+
+    printf("GRID(%d) - BLOCK(%d) - SHM(%d)\n", gd-1, bd, *shared_mem);
 }

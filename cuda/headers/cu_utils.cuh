@@ -18,6 +18,9 @@ extern "C"{
 #define SM 48                               // number of available streaming multiprocessors
 #define MAX_THREADS SM*MAX_THREADS_BLOCK    // max number of co-resident threads
 #define MAX_SHM 48*1024                     // max dimension of the shared memory per block on the specific device
+#define L2_CACHE_SIZE 4096*1024             // dimension of L2 cache in Bytes
+#define CACHE_LINE_SIZE 128
+#define REG_PER_BLOCK 64*1024
 
 // UTILS
 #define FULL_WARP_MASK 0xFFFFFFFF
