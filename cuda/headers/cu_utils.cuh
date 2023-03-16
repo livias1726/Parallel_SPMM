@@ -23,9 +23,9 @@ extern "C"{
 #define REG_PER_BLOCK 64*1024
 
 // UTILS
-#define FULL_WARP_MASK 0xFFFFFFFF
+#define FULL_WARP_MASK 0xffffffff
 #define GET_MAX(a, b) if (a < b) {a = b;}
-#define GET_SUP_INT(x, y) (x%y != 0) ? x/y + 1 : x/y;
+#define ROUND_UP_MULT(a, b) ((a + (b-1))/b) * b
 
 //--------------------------------------------- Signatures ---------------------------------------------------------//
 void process_arguments(int argc, char **argv, FILE **f, int *k);
