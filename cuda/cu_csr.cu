@@ -126,7 +126,7 @@ __device__ void spmm_csr_vector_small_uneven(const int *irp, const int *ja, cons
     }
     s = first_pot * k;
     mask = __ballot_sync(FULL_WARP_MASK, tid_w < s);
-    int start_c;
+    int tid_sw_ex;
     int residual_warps = sub_warps - first_pot, z = first_pot + swid;
 
     int j, r_y, sj, ej;
@@ -146,9 +146,10 @@ __device__ void spmm_csr_vector_small_uneven(const int *irp, const int *ja, cons
 
         // TODO: reduce thread divergence using other conditions than 'uneven' boolean
         // accumulate the excluded values due to the unevenness of the sub warps size
+        tid_sw_ex = (tid_sw + (i-start)%k)%k;
+        bool flag = tid_sw_ex >= rem && tid_sw_ex <= k-1;
         j = base + sj;
-        start_c = rem - (i % k);
-        if (tid_sw == start_c && j < ej) {
+        if (flag && j < ej) {
             val_a = as[j];
             val_x = x[ja[j] * k + tid_sw];
 
@@ -158,8 +159,8 @@ __device__ void spmm_csr_vector_small_uneven(const int *irp, const int *ja, cons
 
         // first reduction
         if (swid < residual_warps) {
-            if ((z != sub_warps - 1) || ()){
-                LDS[tid_b] += LDS[tid_b + z * k];
+            if ((z != sub_warps - 1) || (!flag)){
+                LDS[tid_b] += LDS[tid_b + first_pot * k];
             }
         }
         __syncwarp();
