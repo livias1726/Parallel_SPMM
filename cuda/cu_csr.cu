@@ -96,16 +96,21 @@ __device__ void spmm_csr_vector_small_uneven(const int *irp, const int *ja, cons
     /*
      * When warpSize is not a multiple of k, given k < warpSize, the last sub warp will not be able to cover every
      * column of x in the first accumulation phase. The remaining columns will need to be covered in the second
-     * accumulation
+     * accumulation.
      * */
     int first_pot;
+    int sw = sub_warps-1;
     //TODO: optimize this setting --> see if it's better to compute in csr_adaptive kernel
-    if (sub_warps >> 3) {
-        first_pot = 8;
-    } else if (sub_warps >> 2) {
-        first_pot = 4;
+    if (sw == 1) {
+        first_pot = 1;
     } else {
-        first_pot = 2;
+        if (sw >> 3) {
+            first_pot = 8;
+        } else if (sw >> 2) {
+            first_pot = 4;
+        } else {
+            first_pot = 2;
+        }
     }
 
     int s = first_pot * k;
@@ -139,7 +144,12 @@ __device__ void spmm_csr_vector_small_uneven(const int *irp, const int *ja, cons
                 LDS[tid_b] += val_a * val_x;
             }
         }
-        //__syncwarp(); // needed to be sure that the accumulation is complete (if threads within a warp can be scheduled separately)
+
+        /*
+         * Synchronization only needed to be sure that the accumulation is complete
+         * (if threads within a warp can be scheduled separately)
+         */
+        //__syncwarp();
 
         // first reduction
         if (swid < residual_warps) {
