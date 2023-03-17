@@ -14,6 +14,8 @@
 
 #define GET_GFLOPS(t1, t2, flop) ( flop / ((t2.tv_sec - t1.tv_sec) * 1.e9 + (t2.tv_nsec - t1.tv_nsec)) )
 #define ROUND_UP(a,b) ((a+b-1)/b)
+#define MAX(a,b) (a > b ? a : b)
+
 #define Type double
 
 /**
@@ -96,7 +98,7 @@ void process_mm(MM_typecode*, FILE*);
 void malloc_handler(int, void**);
 void clean_up(int, void**);
 void populate_multivector(Type*, int, int);
-void get_errors(int, int, Type*, Type*, double*, double*);
+void get_errors(int, Type*, Type*, Type*, Type*);
 
 
 

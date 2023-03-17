@@ -9,7 +9,8 @@ int main(int argc, char** argv) {
     MM_typecode t;
     FILE *f;
     int k, m, n, nz;
-    double flop, gflops_s, gflops_p, abs_err, rel_err;
+    double flop, gflops_s, gflops_p;
+    Type abs_err, rel_err;
     Type *x, *y_s, *y_p;
     // device
     Type *d_x, *d_y, *d_as;
@@ -88,7 +89,7 @@ int main(int argc, char** argv) {
     // --------------------------------------------- GPU SpMM -------------------------------------------------- //
 
     //to avoid bank conflicts since double values are used
-    checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
+    //checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
 
     // Compute BLOCK_DIM --> each block works on a sub-matrix of A (bdy x n) and a sub-matrix of x (n x bdx)
     dim3 BLOCK_DIM;
@@ -122,8 +123,9 @@ int main(int argc, char** argv) {
     checkCudaErrors(cudaMemcpy(y_p, d_y, m * k * sizeof(Type), cudaMemcpyDeviceToHost));
 
     // check results
-    // --> relative error should be as close as possible to 2.22e−16 (IEEE double precision unit roundoff)
-    get_errors(m, k, y_s, y_p, &abs_err, &rel_err);
+    // --> double: relative error should be as close as possible to 2.22e−16 (IEEE double precision unit roundoff)
+    // --> float: relative error should be as close as possible to 1.19e-07 (IEEE double precision unit roundoff)
+    get_errors(m*k, y_s, y_p, &abs_err, &rel_err);
 
 #ifdef SAVE
     save_result(y_p, m, k);

@@ -47,24 +47,36 @@ void clean_up(int size, void **p){
  * Computes the absolute and relative error of the parallel product
  * computation (wrt the serial one) using the infinity norm.
  * */
-void get_errors(int rows, int cols, Type* seq, Type* par, double* abs, double* rel){
-    int i, j, idx;
-    double max_diff = 0.0, tmp_diff, tmp_norm, norm = 0.0;
+void get_errors(int elems, Type* seq, Type* par, Type* abs, Type* rel){
 
-    for (i = 0; i < rows; i++) {
-        tmp_diff = 0.0;
-        tmp_norm = 0.0;
-        idx = i*cols;
+    Type max_abs, diff_abs, diff = 0.0, rel_diff = 0.0;
 
-        for (j = 0; j < cols; j++) {
-            tmp_diff += fabs(par[idx + j] - seq[idx + j]);
-            tmp_norm += fabs(seq[idx + j]);
-        }
+    for (int i = 0; i < elems; i++) {
+        max_abs = MAX(fabs(seq[i]), fabs(par[i]));
 
-        if (tmp_diff > max_diff) max_diff = tmp_diff;
-        if (tmp_norm > norm) norm = tmp_norm;
+        if (max_abs == 0.0) max_abs = 1.0;
+
+        diff_abs = fabs(seq[i]-par[i]);
+
+        rel_diff = MAX(rel_diff, diff_abs/max_abs);
+        diff = MAX(diff, diff_abs);
+    }
+
+    *abs = diff;
+    *rel = rel_diff;
+}
+
+/*
+void get_errors(int elems, Type* seq, Type* par, Type* abs, Type* rel){
+
+    Type max_diff = 0.0, max_norm = 0.0;
+
+    for (int i = 0; i < elems; i++) {
+        max_diff = MAX(max_diff, fabs(par[i] - seq[i]));
+        max_norm = MAX(max_norm, fabs(seq[i]));
     }
 
     *abs = max_diff;
-    *rel = max_diff/norm;
+    *rel = max_diff/max_norm;
 }
+ */
