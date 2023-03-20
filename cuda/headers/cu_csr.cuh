@@ -1,6 +1,5 @@
 #include "cu_utils.cuh"
 
-#define BD 1024
 #define MAX_NUM_ROWS 1 // delta number of rows for the Vector kernel computation
 
 __global__ void spmm_csr_adaptive_kernel(const int *irp, const int *ja, const Type *as, int k, const Type* x,

@@ -30,11 +30,10 @@ __device__ void spmm_csr_vector_large(const int *irp, const int *ja, const Type 
 
     /*
      * With this configuration there's no need for a reduction phase since each thread takes care of a value of y
-     * given by the row taken by the warp the thread's a part of and the column given by the k assigned iteratively
-     * by the thread.
+     * given by the row taken by the warp and the column given by the k assigned iteratively.
      *
-     * Since each thread's computation is not dependent from the others, there's also no need for explicit
-     * synchronization.
+     * Since each thread's computation is not dependent from the others,
+     * there's also no need for explicit synchronization.
      * */
 
     // each thread in the warp uses ceil(k/warpSize) cells in LDS to store accumulation
@@ -77,11 +76,10 @@ __device__ void spmm_csr_vector_large(const int *irp, const int *ja, const Type 
 }
 
 /**
-  * VECTOR KERNEL with k < warpSize and warpSize non multiple of k: 1 warp per matrix row
-  * */
-  /*
-__device__ void spmm_csr_vector_small_uneven(const int *irp, const int *ja, const Type *as, int start, int end,
-                                             int k, const Type* x, Type* y){
+ * VECTOR KERNEL with k < warpSize: 1 warp per matrix row
+ * */
+__device__ void spmm_csr_vector_small(const int *irp, const int *ja, const Type *as, int start, int end,
+                                      int k, const Type* x, Type* y){
 
     extern __shared__ Type LDS[];           // each thread has a cell in the shared memory
 
@@ -91,37 +89,19 @@ __device__ void spmm_csr_vector_small_uneven(const int *irp, const int *ja, cons
     int wid = tid_b / warpSize;             // warp id
     int swid = tid_w / k;                   // sub warp id
     int num_warps = blockDim.x / warpSize;  // number of warps in the block
-    int sub_warps = ROUND_UP(warpSize,k);   // number of sub warps in the warp: ceiling of warpSize/k
-*/
-    // reduction setup
-    /*
-     * When warpSize is not a multiple of k, given k < warpSize, the last sub warp will not be able to cover every
-     * column of x in the first accumulation phase. The remaining columns will need to be covered in the second
-     * accumulation.
-     * */
-    /*
-    //TODO: optimize this setting --> see if it's better to compute in csr_adaptive kernel
-    int first_pot, sw = sub_warps - 1;
-    if (sw == 1) { first_pot = 1;
-    } else {
-        if (sw >> 3) { first_pot = 8;
-        } else if (sw >> 2) { first_pot = 4;
-        } else { first_pot = 2;
-        }
-    }
+    int sub_warps = warpSize / k;   // number of sub warps in the warp (truncated excluded)
 
+    // reduction setup
+    int first_pot = 8;
+    for (int dig = 3; dig >= 0; dig--) {
+        if (sub_warps >> dig) break;
+        first_pot >>= 1;
+    }
     int s = first_pot * k; // first thread id outside the group of sub-warps used in the reduction
     unsigned mask = __ballot_sync(FULL_WARP_MASK, tid_w < s);
-
-    bool extended_acc = (tid_sw >= warpSize % k) && (tid_sw < k);
-    bool in_reduction_1 = ((swid < (sub_warps - first_pot)) && ((swid != sw - first_pot) || !extended_acc));
-    bool in_reduction_2 = swid < first_pot;
-
-    int swid_acc = sub_warps * swid + sw;
-    int sub_warps_acc = sub_warps * sw;
+    int excluded = sub_warps - first_pot;
 
     int j, r_y, sj, ej;
-    Type val_a, val_x;
     for (int i = start + wid; i < end; i += num_warps) { // warp takes the row
         r_y = i * k;
         sj = irp[i];
@@ -129,142 +109,25 @@ __device__ void spmm_csr_vector_small_uneven(const int *irp, const int *ja, cons
 
         LDS[tid_b] = 0.0;
 
-        // ACCUMULATION PHASE 1
-        for (j = sj + swid; j < ej; j += sub_warps) { // sub warp takes the non-zero
-            val_a = as[j];
-            val_x = x[ja[j] * k + tid_sw]; // thread in sub warp takes the specific value of x
-            LDS[tid_b] += val_a * val_x;
-        }
-
-        // ACCUMULATION PHASE 2: accumulate the excluded values due to the unevenness of the sub warps size
-        if (extended_acc) {
-            for (j = sj + swid_acc; j < ej; j += sub_warps_acc) {
-                val_a = as[j];
-                val_x = x[ja[j] * k + tid_sw];
-                LDS[tid_b] += val_a * val_x;
+        // ACCUMULATION
+        if (swid != sub_warps) {
+            for (j = sj + swid; j < ej; j += sub_warps) { // sub warp takes the non-zero
+                // thread in sub warp takes the specific value of x
+                LDS[tid_b] += as[j] * x[ja[j] * k + tid_sw];
             }
         }
-        // Synchronization only needed if threads within a warp can be scheduled separately
         //__syncwarp();
 
-        // REDUCTION PHASE 1: values of sub-warps not involved in the warp reduction phase are accumulated in parallel
-        // by the other sub-warps.
-        if (in_reduction_1) LDS[tid_b] += LDS[tid_b + first_pot * k];
+        // REDUCTION PHASE 1:
+        // values of sub-warps not involved in the warp reduction phase
+        // are accumulated in parallel by the other sub-warps.
+        if (swid < excluded) LDS[tid_b] += LDS[tid_b + first_pot * k];
         //__syncwarp();
 
         // REDUCTION PHASE 2
-        if (in_reduction_2) LDS[tid_b] = sub_reduce(mask, s>>1, k, LDS[tid_b]);
+        if (swid < first_pot) LDS[tid_b] = sub_reduce(mask, s>>1, k, LDS[tid_b]);
 
         // update
-        if (swid == 0) y[r_y + tid_sw] = LDS[tid_b];
-        //__syncwarp();
-    }
-}
-*/
-
-    __device__ void spmm_csr_vector_small_uneven(const int *irp, const int *ja, const Type *as, int start, int end,
-                                                 int k, const Type* x, Type* y){
-
-        extern __shared__ Type LDS[];           // each thread has a cell in the shared memory
-
-        int tid_b = threadIdx.x;                // thread id in the block
-        int tid_w = tid_b % warpSize;           // thread id in the warp
-        int tid_sw = tid_w % k;                 // thread id in the sub warp
-        int wid = tid_b / warpSize;             // warp id
-        int swid = tid_w / k;                   // sub warp id
-        int num_warps = blockDim.x / warpSize;  // number of warps in the block
-
-        int sub_warps = warpSize / k;   // number of sub warps in the warp
-
-        // reduction setup
-        /* When warpSize is not a multiple of k, given k < warpSize, the last sub warp will not be able to cover every
-         * column of x in the first accumulation phase. The remaining columns will need to be covered in the second
-         * accumulation. */
-        int first_pot;
-        if (sub_warps == 1) { first_pot = 1;
-        } else {
-            if (sub_warps >> 3) { first_pot = 8;
-            } else if (sub_warps >> 2) { first_pot = 4;
-            } else { first_pot = 2;
-            }
-        }
-
-        int s = first_pot * k; // first thread id outside the group of sub-warps used in the reduction
-        unsigned mask = __ballot_sync(FULL_WARP_MASK, tid_w < s);
-
-        bool extended_acc = (tid_sw >= warpSize % k) && (tid_sw < k);
-        bool in_reduction_1 = ((swid < (sub_warps - first_pot)) && ((swid != sw - first_pot) || !extended_acc));
-        bool in_reduction_2 = swid < first_pot;
-
-        int swid_acc = sub_warps * swid + sw;
-        int sub_warps_acc = sub_warps * sw;
-
-        if (swid != sub_warps) {
-            int j, r_y, sj, ej;
-            Type val_a, val_x;
-            for (int i = start + wid; i < end; i += num_warps) { // warp takes the row
-                r_y = i * k;
-                sj = irp[i];
-                ej = irp[i+1];
-
-                LDS[tid_b] = 0.0;
-
-                // ACCUMULATION PHASE 1
-                for (j = sj + swid; j < ej; j += sub_warps) { // sub warp takes the non-zero
-                    val_a = as[j];
-                    val_x = x[ja[j] * k + tid_sw]; // thread in sub warp takes the specific value of x
-                    LDS[tid_b] += val_a * val_x;
-                }
-
-                // REDUCTION PHASE 1: values of sub-warps not involved in the warp reduction phase are accumulated in parallel
-                // by the other sub-warps.
-                if (in_reduction_1) LDS[tid_b] += LDS[tid_b + first_pot * k];
-                //__syncwarp();
-
-                // REDUCTION PHASE 2
-                if (in_reduction_2) LDS[tid_b] = sub_reduce(mask, s>>1, k, LDS[tid_b]);
-
-                // update
-                if (swid == 0) y[r_y + tid_sw] = LDS[tid_b];
-                //__syncwarp();
-            }
-        }
-        __syncwarp();
-    }
-
-    /**
-      * VECTOR KERNEL with k < warpSize and warpSize multiple of k: 1 warp per matrix row.
-      * */
-__device__ void spmm_csr_vector_small_even(const int *irp, const int *ja, const Type *as, int start, int end,
-                                           int k, const Type* x, Type* y){
-
-    extern __shared__ Type LDS[];           // each thread has a cell in the shared memory
-
-    int tid_b = threadIdx.x;                // thread id in the block
-    int tid_w = tid_b % warpSize;           // thread id in the warp
-    int tid_sw = tid_w % k;                 // thread id in the sub warp
-    int wid = tid_b / warpSize;             // warp id
-    int swid = tid_w / k;                   // sub warp id
-    int num_warps = blockDim.x / warpSize;  // number of warps in the block
-    int sub_warps = warpSize / k;           // number of sub warps in the warp: ceiling of warpSize/k
-
-    int j, r_y, sj, ej;
-    Type val_a, val_x;
-    for (int i = start + wid; i < end; i += num_warps) { // warp takes the row
-        r_y = i * k;
-        sj = irp[i];
-        ej = irp[i+1];
-
-        LDS[tid_b] = 0.0;
-        for (j = sj + swid; j < ej; j += sub_warps) { // sub warp takes the non-zero
-            val_a = as[j];
-            val_x = x[ja[j] * k + tid_sw]; // thread in sub warp takes the specific value of x
-            LDS[tid_b] += val_a * val_x;
-        }
-        //__syncwarp();
-
-        LDS[tid_b] = sub_reduce(FULL_WARP_MASK, warpSize>>1, k, LDS[tid_b]);
-
         if (swid == 0) y[r_y + tid_sw] = LDS[tid_b];
         //__syncwarp();
     }
@@ -341,9 +204,6 @@ __global__ void spmm_csr_adaptive_kernel(const int *irp, const int *ja, const Ty
     int block_row_end = blocks[blockIdx.x + 1];
     int rows = block_row_end - block_row_start;
 
-    spmm_csr_vector_small_uneven(irp, ja, as, block_row_start, block_row_end, k, x, y);
-
-    /*
     if (rows > MAX_NUM_ROWS) { // non-zeros can fit into the LDS
         if (k > blockDim.x) { //TODO
             printf("CANNOT YET PERFORM THIS SPMM\n");
@@ -352,17 +212,12 @@ __global__ void spmm_csr_adaptive_kernel(const int *irp, const int *ja, const Ty
 
         spmm_csr_stream(irp, ja, as, block_row_start, block_row_end, k, x, y);
     } else { // the single row is too large to fit into the LDS with a streaming algorithm
-        if (k >= warpSize) {
+        if (k >= warpSize >> 1) {
             spmm_csr_vector_large(irp, ja, as, block_row_start, block_row_end, k, x, y);
         } else {
-            if (warpSize % k) {
-                spmm_csr_vector_small_uneven(irp, ja, as, block_row_start, block_row_end, k, x, y);
-            } else {
-                spmm_csr_vector_small_even(irp, ja, as, block_row_start, block_row_end, k, x, y);
-            }
+            spmm_csr_vector_small(irp, ja, as, block_row_start, block_row_end, k, x, y);
         }
     }
-     */
 }
 
 /**
@@ -418,9 +273,9 @@ void compute_csr_dimensions(int m, int nz, int k, int *irp, int* blocks, int *nu
     // TODO: manage max shm
     // compute shared memory dimension
     // if vector kernel:
-    /*int k_factor = ROUND_UP(k, WARP_SIZE); // number of columns assigned to each thread
-    *shared_mem = bd * k_factor * sizeof(Type);*/
+    int k_factor = ROUND_UP(k, WARP_SIZE); // number of columns assigned to each thread
+    *shared_mem = bd * k_factor * sizeof(Type);
     // if stream kernel:
 
-    *shared_mem = bd * k * sizeof(Type); // with this: max k < MAX_SHM/(bd * sizeof(Type))
+    //*shared_mem = bd * k * sizeof(Type); // with this: max k < MAX_SHM/(bd * sizeof(Type))
 }
