@@ -26,7 +26,7 @@ __device__ Type sub_reduce(unsigned mask, int s, int k, Type sum){
   * (with bd=MAX, needed a k x7 bigger (> 192) than warpSize to reach over MAX_SHM)
   * */
 __device__ void spmm_csr_vector_large(const int *irp, const int *ja, const Type *as, int start, int end,
-                                int k, const Type* x, Type* y){
+                                      int k, const Type* x, Type* y){
 
     /*
      * With this configuration there's no need for a reduction phase since each thread takes care of a value of y
@@ -79,8 +79,9 @@ __device__ void spmm_csr_vector_large(const int *irp, const int *ja, const Type 
 /**
   * VECTOR KERNEL with k < warpSize and warpSize non multiple of k: 1 warp per matrix row
   * */
+  /*
 __device__ void spmm_csr_vector_small_uneven(const int *irp, const int *ja, const Type *as, int start, int end,
-                                      int k, const Type* x, Type* y){
+                                             int k, const Type* x, Type* y){
 
     extern __shared__ Type LDS[];           // each thread has a cell in the shared memory
 
@@ -91,13 +92,14 @@ __device__ void spmm_csr_vector_small_uneven(const int *irp, const int *ja, cons
     int swid = tid_w / k;                   // sub warp id
     int num_warps = blockDim.x / warpSize;  // number of warps in the block
     int sub_warps = ROUND_UP(warpSize,k);   // number of sub warps in the warp: ceiling of warpSize/k
-
+*/
     // reduction setup
     /*
      * When warpSize is not a multiple of k, given k < warpSize, the last sub warp will not be able to cover every
      * column of x in the first accumulation phase. The remaining columns will need to be covered in the second
      * accumulation.
      * */
+    /*
     //TODO: optimize this setting --> see if it's better to compute in csr_adaptive kernel
     int first_pot, sw = sub_warps - 1;
     if (sw == 1) { first_pot = 1;
@@ -158,10 +160,81 @@ __device__ void spmm_csr_vector_small_uneven(const int *irp, const int *ja, cons
         //__syncwarp();
     }
 }
+*/
 
-/**
-  * VECTOR KERNEL with k < warpSize and warpSize multiple of k: 1 warp per matrix row.
-  * */
+    __device__ void spmm_csr_vector_small_uneven(const int *irp, const int *ja, const Type *as, int start, int end,
+                                                 int k, const Type* x, Type* y){
+
+        extern __shared__ Type LDS[];           // each thread has a cell in the shared memory
+
+        int tid_b = threadIdx.x;                // thread id in the block
+        int tid_w = tid_b % warpSize;           // thread id in the warp
+        int tid_sw = tid_w % k;                 // thread id in the sub warp
+        int wid = tid_b / warpSize;             // warp id
+        int swid = tid_w / k;                   // sub warp id
+        int num_warps = blockDim.x / warpSize;  // number of warps in the block
+
+        int sub_warps = warpSize / k;   // number of sub warps in the warp
+
+        // reduction setup
+        /* When warpSize is not a multiple of k, given k < warpSize, the last sub warp will not be able to cover every
+         * column of x in the first accumulation phase. The remaining columns will need to be covered in the second
+         * accumulation. */
+        int first_pot;
+        if (sub_warps == 1) { first_pot = 1;
+        } else {
+            if (sub_warps >> 3) { first_pot = 8;
+            } else if (sub_warps >> 2) { first_pot = 4;
+            } else { first_pot = 2;
+            }
+        }
+
+        int s = first_pot * k; // first thread id outside the group of sub-warps used in the reduction
+        unsigned mask = __ballot_sync(FULL_WARP_MASK, tid_w < s);
+
+        bool extended_acc = (tid_sw >= warpSize % k) && (tid_sw < k);
+        bool in_reduction_1 = ((swid < (sub_warps - first_pot)) && ((swid != sw - first_pot) || !extended_acc));
+        bool in_reduction_2 = swid < first_pot;
+
+        int swid_acc = sub_warps * swid + sw;
+        int sub_warps_acc = sub_warps * sw;
+
+        if (swid != sub_warps) {
+            int j, r_y, sj, ej;
+            Type val_a, val_x;
+            for (int i = start + wid; i < end; i += num_warps) { // warp takes the row
+                r_y = i * k;
+                sj = irp[i];
+                ej = irp[i+1];
+
+                LDS[tid_b] = 0.0;
+
+                // ACCUMULATION PHASE 1
+                for (j = sj + swid; j < ej; j += sub_warps) { // sub warp takes the non-zero
+                    val_a = as[j];
+                    val_x = x[ja[j] * k + tid_sw]; // thread in sub warp takes the specific value of x
+                    LDS[tid_b] += val_a * val_x;
+                }
+
+                // REDUCTION PHASE 1: values of sub-warps not involved in the warp reduction phase are accumulated in parallel
+                // by the other sub-warps.
+                if (in_reduction_1) LDS[tid_b] += LDS[tid_b + first_pot * k];
+                //__syncwarp();
+
+                // REDUCTION PHASE 2
+                if (in_reduction_2) LDS[tid_b] = sub_reduce(mask, s>>1, k, LDS[tid_b]);
+
+                // update
+                if (swid == 0) y[r_y + tid_sw] = LDS[tid_b];
+                //__syncwarp();
+            }
+        }
+        __syncwarp();
+    }
+
+    /**
+      * VECTOR KERNEL with k < warpSize and warpSize multiple of k: 1 warp per matrix row.
+      * */
 __device__ void spmm_csr_vector_small_even(const int *irp, const int *ja, const Type *as, int start, int end,
                                            int k, const Type* x, Type* y){
 
@@ -173,11 +246,10 @@ __device__ void spmm_csr_vector_small_even(const int *irp, const int *ja, const 
     int wid = tid_b / warpSize;             // warp id
     int swid = tid_w / k;                   // sub warp id
     int num_warps = blockDim.x / warpSize;  // number of warps in the block
-    int sub_warps = ROUND_UP(warpSize,k);   // number of sub warps in the warp: ceiling of warpSize/k
+    int sub_warps = warpSize / k;           // number of sub warps in the warp: ceiling of warpSize/k
 
     int j, r_y, sj, ej;
     Type val_a, val_x;
-
     for (int i = start + wid; i < end; i += num_warps) { // warp takes the row
         r_y = i * k;
         sj = irp[i];
@@ -199,11 +271,15 @@ __device__ void spmm_csr_vector_small_even(const int *irp, const int *ja, const 
 }
 
 /**
- * STREAM KERNEL: streaming into the local scratchpad memory of a fixed number of non-zeros to assign each warp
- * - Becomes inoperative if a row has more NZs than can be allocated in the scratchpad. --> TODO
+ * STREAM KERNEL: streams into the shared memory each individual product related to the NZs assigned to the block.
+ *
+ * The block gets divided into BD/k sub-blocks to perform the products on x's columns in parallel:
+ * - There's a waste of BD % k threads.
+ *
+ * TODO: manage the case when k > BD --> BD/k = 0
  * */
-__device__ void spmm_csr_stream_even(const int *irp, const int *ja, const Type *as, int row_start, int row_end,
-                                 int k, const Type* x, Type* y){
+__device__ void spmm_csr_stream(const int *irp, const int *ja, const Type *as, int row_start, int row_end,
+                                       int k, const Type* x, Type* y){
 
     extern __shared__ Type LDS[]; // each thread has a cell for every nz it should process: tot_nz/sub_blocks
 
@@ -211,127 +287,45 @@ __device__ void spmm_csr_stream_even(const int *irp, const int *ja, const Type *
     int tot_nz = irp[row_end] - first_nz;
     int tid_b = threadIdx.x;
 
-    int sub_blocks = ROUND_UP(blockDim.x, k);
-    int sbid = tid_b / k;
-    int tid_sb = tid_b % k;
-
-    // ACCUMULATION
-    Type val_a, val_x;
-    int idx, i = 0;
-    for (int nz = sbid; nz < tot_nz; nz += sub_blocks) { // each sub-block takes the same nz
-        idx = first_nz+nz;
-        val_a = as[idx];
-        val_x = x[ja[idx] * k + tid_sb]; // each thread in the sub-block computes the product with its column (tid_sb)
-
-        LDS[tid_b + blockDim.x * i++] = val_a * val_x;
-    }
-    __syncthreads();
-
-    // REDUCTION
-    Type tmp;
-    int j, start, end, r_y;
-    for (int i = row_start + sbid; i < row_end; i += sub_blocks){ // each sub-block takes the a row
-        r_y = i * k;
-        start = (irp[i] - first_nz) * k;
-        end = (irp[i + 1] - first_nz) * k;
-
-        tmp = 0.0;
-        for (j = start; j < end; j += k){ // each thread in the sub-block sums up
-            tmp += LDS[j + tid_sb];
-        }
-
-        y[r_y + tid_sb] = tmp;
-    }
-    __syncthreads();
-}
-
-// TODO: manage case when bd is not divisible by k
- // Problema: i thread non sanno quale riga è relativa al nz che stanno processando fino alla fase di riduzione:
- // non è possibile utilizzare += in una fase 2 di accumulazione, nè usare spazio in più in LSD
-__device__ void spmm_csr_stream_uneven(const int *irp, const int *ja, const Type *as, int row_start, int row_end,
-                                     int k, const Type* x, Type* y){
-
-    int i;
-    int first_nz = irp[row_start];
-    int tot_nz = irp[row_end] - first_nz;
-
-    int z = blockIdx.x % k;
-
-    extern __shared__ Type LDS[]; // it must be reused for every column of x to avoid overflowing available memory
-
-    int tid_block = threadIdx.x;
-    int thread_nz = first_nz + tid_block;
-
-    // stream the first iteration of SpMM into LDS using l_tid to shift on the values
-    if (tid_block < tot_nz) LDS[tid_block] = as[thread_nz] * x[ja[thread_nz]*k + z]; // efficient bandwidth usage
-    __syncthreads();
-
-    // Linear reduction: sum up the partial results --> may leave some threads idle
-    for (i = row_start + tid_block; i < row_end; i += blockDim.x){
-        double temp = 0.0;
-
-        for (int j = (irp[i]-first_nz); j < (irp[i + 1]-first_nz); j++){
-            temp += LDS[j];
-        }
-
-        y[i*k + z] = temp;
-    }
-    __syncthreads();
-
-    /*
-    extern __shared__ Type LDS[]; // each thread has a cell for every nz it should process: tot_nz/sub_blocks
-
-    int j;
-    int first_nz = irp[row_start];
-    int tot_nz = irp[row_end] - first_nz;
-    int tid_b = threadIdx.x;
-
-    int sub_blocks = ROUND_UP(blockDim.x, k);
+    int sub_blocks = blockDim.x / k;
     int sbid = tid_b / k;
     int tid_sb = tid_b % k;
 
     // ACCUMULATION 1
-    Type val_a, val_x;
-    int nz, idx, i = 0;
-    for (nz = sbid; nz < tot_nz; nz += sub_blocks) { // each sub-block takes the same nz
-        idx = first_nz+nz;
-        val_a = as[idx];
-        val_x = x[ja[idx] * k + tid_sb]; // each thread in the sub-block computes the product with its column (tid_sb)
+    if (sbid != sub_blocks) { // needed when bd is not divisible by k
+        Type val_a, val_x;
+        int nz, idx;
+        for (nz = sbid; nz < tot_nz; nz += sub_blocks) { // each sub-block takes the same nz
+            idx = first_nz+nz;
+            val_a = as[idx];
+            val_x = x[ja[idx] * k + tid_sb]; // each thread in the sub-block computes the product with its column (tid_sb)
 
-        LDS[tid_b + blockDim.x * i++] = val_a * val_x;
+            // treats shared memory as a matrix with k rows and tot_nz columns
+            LDS[tid_sb * tot_nz + nz] = val_a * val_x;
+        }
     }
-
-    // ACCUMULATION 2
-    int sbid_acc = sub_blocks * sbid + sub_blocks - 1;
-    int sub_blocks_acc = sub_blocks * (sub_blocks - 1);
-    for (nz = sbid_acc; nz < tot_nz; j += sub_blocks_acc) {
-        idx = first_nz+nz;
-        val_a = as[idx];
-        val_x = x[ja[idx] * k + tid_sb];
-
-        LDS[tid_b + blockDim.x * i++] = val_a * val_x;
-    }
-    __syncthreads();
+    __syncthreads(); // separates accumulation and reduction for when some threads do not enter the accumulation
 
     // REDUCTION
-    Type tmp;
-    int start, end, r_y;
-    for (i = row_start + sbid; i < row_end; i += sub_blocks){ // each sub-block takes the a row
-        r_y = i * k;
-        start = (irp[i]-first_nz) * k;
-        end = (irp[i + 1]-first_nz) * k;
+    if (sbid != sub_blocks) {
+        Type tmp;
+        int j, start, end, r_y;
+        for (int i = row_start + sbid; i < row_end; i += sub_blocks){ // each sub-block takes the a row
+            r_y = i * k;
 
-        tmp = 0.0;
-        for (j = start; j < end; j += k){ // each thread in the sub-block sums up
-            tmp += LDS[j + tid_sb];
+            start = irp[i] - first_nz;
+            end = irp[i + 1] - first_nz;
+            tmp = 0.0;
+
+            for (j = start; j < end; j++){ // each thread in the sub-block sums up
+                tmp += LDS[tid_sb * tot_nz + j];
+            }
+
+            y[r_y + tid_sb] = tmp;
         }
-
-        y[r_y + tid_sb] = tmp;
     }
-    __syncthreads();
-     */
+    //__syncthreads();
 }
-
 
 /**
  * CSR Adaptive SpMM: dynamically determines whether to execute a set of rows with the stream or the vector kernel.
@@ -342,25 +336,21 @@ __device__ void spmm_csr_stream_uneven(const int *irp, const int *ja, const Type
 __global__ void spmm_csr_adaptive_kernel(const int *irp, const int *ja, const Type *as, int k, const Type* x,
                                          int* blocks, Type* y) {
 
-    int bid = blockIdx.x / k;
-    int block_row_start = blocks[bid];
-    int block_row_end = blocks[bid + 1];
 
-    /*
     int block_row_start = blocks[blockIdx.x];
     int block_row_end = blocks[blockIdx.x + 1];
-     */
     int rows = block_row_end - block_row_start;
 
+    spmm_csr_vector_small_uneven(irp, ja, as, block_row_start, block_row_end, k, x, y);
+
+    /*
     if (rows > MAX_NUM_ROWS) { // non-zeros can fit into the LDS
-        spmm_csr_stream_uneven(irp, ja, as, block_row_start, block_row_end, k, x, y);
-        /*
-        if (blockDim.x % k) {
-            spmm_csr_stream_uneven(irp, ja, as, block_row_start, block_row_end, k, x, y);
-        } else {
-            spmm_csr_stream_even(irp, ja, as, block_row_start, block_row_end, k, x, y);
+        if (k > blockDim.x) { //TODO
+            printf("CANNOT YET PERFORM THIS SPMM\n");
+            return;
         }
-        */
+
+        spmm_csr_stream(irp, ja, as, block_row_start, block_row_end, k, x, y);
     } else { // the single row is too large to fit into the LDS with a streaming algorithm
         if (k >= warpSize) {
             spmm_csr_vector_large(irp, ja, as, block_row_start, block_row_end, k, x, y);
@@ -372,6 +362,7 @@ __global__ void spmm_csr_adaptive_kernel(const int *irp, const int *ja, const Ty
             }
         }
     }
+     */
 }
 
 /**
@@ -422,15 +413,14 @@ void compute_csr_dimensions(int m, int nz, int k, int *irp, int* blocks, int *nu
     // 1D grid dimension: compute row balancing on blocks and number of blocks needed
     // TODO: consider k in balancing
     *num_blocks = get_csr_row_blocks(bd, m, irp, blocks);
-    //*GRID_DIM = dim3(*num_blocks-1);
-    *GRID_DIM = dim3((*num_blocks-1) * k);
+    *GRID_DIM = dim3(*num_blocks-1);
 
     // TODO: manage max shm
     // compute shared memory dimension
-    *shared_mem = bd * sizeof(Type);
-
     // if vector kernel:
     /*int k_factor = ROUND_UP(k, WARP_SIZE); // number of columns assigned to each thread
     *shared_mem = bd * k_factor * sizeof(Type);*/
-    // if stream kernel: *shared_mem = bd * k * sizeof(Type); // with this: max k < MAX_SHM/(bd * sizeof(Type))
+    // if stream kernel:
+
+    *shared_mem = bd * k * sizeof(Type); // with this: max k < MAX_SHM/(bd * sizeof(Type))
 }
