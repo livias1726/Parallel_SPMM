@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
     // --------------------------------------------- GPU SpMM -------------------------------------------------- //
 
     //to avoid bank conflicts since double values are used
-    //checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
+    if (sizeof(Type) == 8) checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
 
     // Compute BLOCK_DIM --> each block works on a sub-matrix of A (bdy x n) and a sub-matrix of x (n x bdx)
     dim3 BLOCK_DIM;
@@ -103,7 +103,6 @@ int main(int argc, char** argv) {
     // product
     timer->start();
     spmm_ell_kernel<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, maxnz, d_ja, d_as, d_x, k, d_y);
-
 #else
     blocks = (int*)malloc(m*sizeof(int));
     compute_csr_dimensions(m, nz, k, csr->IRP, blocks, &num_blocks, &BLOCK_DIM, &GRID_DIM, &shared_mem);
