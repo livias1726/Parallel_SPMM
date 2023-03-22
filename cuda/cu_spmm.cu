@@ -16,13 +16,17 @@ int main(int argc, char** argv) {
     Type *d_x, *d_y, *d_as;
     int *d_ja;
     StopWatchInterface* timer = 0;
+    // dimensions
+    dim3 BLOCK_DIM;
+    dim3 GRID_DIM;
+    int shared_mem;
 
 #ifdef ELLPACK
     ELL *ell;
     int maxnz;
 #else
     CSR *csr;
-    int num_blocks, *blocks;
+    int max_rows, num_blocks, *blocks;
     int *d_irp, *d_blocks;
 #endif
 
@@ -92,10 +96,6 @@ int main(int argc, char** argv) {
     if (sizeof(Type) == 8) checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
 
     // Compute BLOCK_DIM --> each block works on a sub-matrix of A (bdy x n) and a sub-matrix of x (n x bdx)
-    dim3 BLOCK_DIM;
-    dim3 GRID_DIM;
-    int shared_mem;
-
 #ifdef ELLPACK
     maxnz = ell->MAXNZ;
     compute_ell_dimensions(m, maxnz, k, &BLOCK_DIM, &GRID_DIM, &shared_mem);
@@ -104,16 +104,15 @@ int main(int argc, char** argv) {
     timer->start();
     spmm_ell_kernel<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, maxnz, d_ja, d_as, d_x, k, d_y);
 #else
-    blocks = (int*)malloc(m*sizeof(int));
-    compute_csr_dimensions(m, nz, k, csr->IRP, blocks, &num_blocks, &BLOCK_DIM, &GRID_DIM, &shared_mem);
+    blocks = (int*)malloc((m+1)*sizeof(int));
+    compute_csr_dimensions(csr, k, blocks, &num_blocks, &BLOCK_DIM, &GRID_DIM, &shared_mem, &max_rows);
     checkCudaErrors(cudaMalloc((void**) &d_blocks, num_blocks*sizeof(int)));
     checkCudaErrors(cudaMemcpy(d_blocks, blocks, num_blocks*sizeof(int), cudaMemcpyHostToDevice));
 
     // product
     timer->start();
-    spmm_csr_adaptive_kernel<<<GRID_DIM, BLOCK_DIM, shared_mem>>>(d_irp, d_ja, d_as, k, d_x, d_blocks, d_y);
+    spmm_csr_adaptive_kernel<<<GRID_DIM, BLOCK_DIM, shared_mem>>>(d_irp, d_ja, d_as, k, max_rows, d_x, d_blocks, d_y);
 #endif
-
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
     timer->stop();
@@ -123,7 +122,7 @@ int main(int argc, char** argv) {
 
     // check results
     // --> double: relative error should be as close as possible to 2.22e−16 (IEEE double precision unit roundoff)
-    // --> float: relative error should be as close as possible to 1.19e-07 (IEEE double precision unit roundoff)
+    // --> float: relative error should be as close as possible to 1.19e-07 (IEEE single precision unit roundoff)
     get_errors(m*k, y_s, y_p, &abs_err, &rel_err);
 
 #ifdef SAVE
