@@ -124,93 +124,18 @@ __device__ void spmm_csr_vector_small(const int *irp, const int *ja, const Type 
     }
 }
 
-__device__ void spmm_csr_stream_large(const int *irp, const int *ja, const Type *as, int row_start, int row_end,
-                                      int k, const Type* x, Type* y){
-
-    //extern __shared__ Type LDS[]; // each thread has a cell for every nz it should process: tot_nz/sub_blocks
-
-    int tid_b = threadIdx.x;
-    int bd = blockDim.x;
-    int kpt = ROUND_UP(k, bd);
-
-    Type tmp;
-    int z, tid_k;
-    int j, sj, ej, r_y;
-    for (int i = row_start; i < row_end; i++){ // whole block takes the same row
-        r_y = i * k;
-        sj = irp[i];
-        ej = irp[i + 1];
-
-        for (z = 0; z < kpt; z++) { // each thread computes the product with its columns
-            tid_k = (z * bd) + tid_b;
-
-            if (tid_k < k) {
-                tmp = 0.0;
-                for (j = sj; j < ej; j++) {
-                    tmp += as[j] * x[ja[j] * k + tid_k];
-                }
-                y[r_y + tid_k] = tmp;
-            }
-        }
-    }
-}
-
-/*
- * The block gets divided into BD/k sub-blocks to perform the products on x's columns in parallel.
- * There's an eventual waste of BD % k threads.
- *
- * This implementation brings the need of a shared memory of size BD * k, since each thread performs its products until
- * the non-zeros assigned to the block are covered, while the reduction considering the rows is done after.
- * */
-__device__ void spmm_csr_stream_small(const int *irp, const int *ja, const Type *as, int row_start, int row_end,
-                                      int k, const Type* x, Type* y){
-
-    extern __shared__ Type LDS[]; // each thread has a cell for every nz it should process: tot_nz/sub_blocks
-
-    int first_nz = irp[row_start];
-    int tot_nz = irp[row_end] - first_nz;
-    int tid_b = threadIdx.x;
-
-    int sub_blocks = blockDim.x / k;
-    int sbid = tid_b / k;
-    int tid_sb = tid_b % k;
-    int lds_row = tid_sb * tot_nz;
-
-    // ACCUMULATION
-    if (sbid != sub_blocks) { // needed when bd is not divisible by k
-        int idx;
-        for (int nz = sbid; nz < tot_nz; nz += sub_blocks) { // each sub-block takes the same nz
-            idx = first_nz + nz;
-            // each thread in the sub-block computes the product with its column (tid_sb)
-            // treats shared memory as a matrix with k rows and tot_nz columns
-            LDS[lds_row + nz] = as[idx] * x[ja[idx] * k + tid_sb];
-        }
-    }
-    __syncthreads(); // separates accumulation and reduction for when some threads do not enter the accumulation
-
-    // REDUCTION
-    if (sbid != sub_blocks) {
-        Type tmp;
-        int j;
-
-        for (int i = row_start + sbid; i < row_end; i += sub_blocks){ // each sub-block takes the a row
-            tmp = 0.0;
-            for (j = (irp[i] - first_nz); j < (irp[i + 1] - first_nz); j++){ // each thread in the sub-block sums up
-                tmp += LDS[lds_row + j];
-            }
-            y[i * k + tid_sb] = tmp;
-        }
-    }
-}
-
 /**
  * VECTOR KERNEL: 1 warp per matrix row.
  *
  * Each warp is divided into warpSize/k sub-blocks to perform the products on x's columns in parallel:
  * - There's an eventual waste of warpSize % k threads.
  * */
-__device__ void spmm_csr_vector(const int *irp, const int *ja, const Type *as, int start, int end,
-                                int k, const Type* x, Type* y){
+__global__ void spmm_csr_vector_kernel(const int *irp, const int *ja, const Type *as, int k, const Type* x,
+                                         int* blocks, Type* y) {
+
+    int start = blocks[blockIdx.x];
+    int end = blocks[blockIdx.x + 1];
+
     if (k > warpSize >> 1) {
         spmm_csr_vector_large(irp, ja, as, start, end, k, x, y);
     } else {
@@ -219,60 +144,25 @@ __device__ void spmm_csr_vector(const int *irp, const int *ja, const Type *as, i
 }
 
 /**
- * STREAM KERNEL: streams into the shared memory each individual product related to the NZs assigned to the block
- * */
-__device__ void spmm_csr_stream(const int *irp, const int *ja, const Type *as, int row_start, int row_end,
-                                int k, const Type* x, Type* y){
-    if (k < blockDim.x) {
-        spmm_csr_stream_small(irp, ja, as, row_start, row_end, k, x, y);
-    } else {
-        spmm_csr_stream_large(irp, ja, as, row_start, row_end, k, x, y);
-    }
-}
-
-/**
- * CSR Adaptive SpMM:
- * dynamically determines whether to execute a set of rows with the stream or the vector kernel.
- *
- * Inspired by Algorithm 3 of Greathouse, Daga - "Efficient Sparse Matrix-Vector Multiplication
- * on GPUs using the CSR Storage Format"
- * */
-__global__ void spmm_csr_adaptive_kernel(const int *irp, const int *ja, const Type *as, int k, int max_rows, const Type* x,
-                                         int* blocks, Type* y) {
-
-    int block_row_start = blocks[blockIdx.x];
-    int block_row_end = blocks[blockIdx.x + 1];
-    int rows = block_row_end - block_row_start;
-
-    if (rows > max_rows) { // non-zeros can fit into the LDS
-        spmm_csr_stream(irp, ja, as, block_row_start, block_row_end, k, x, y);
-    } else { // the single row is too large to fit into the LDS with a streaming algorithm
-        spmm_csr_vector(irp, ja, as, block_row_start, block_row_end, k, x, y);
-    }
-}
-
-/**
  * Computes the number of rows to give each block and the total number of blocks to cover all rows.
  *
  * Inspired by Algorithm 2 of Greathouse, Daga - "Efficient Sparse Matrix-Vector Multiplication
  * on GPUs using the CSR Storage Format"
- *
- * NOTE: the loop condition was changed (i <= rows) wrt the original algorithm (i < rows)
- *       to avoid overflowing shared memory when last blocks receives more nnz than it can handle in memory.
  * */
-int get_rows_per_block(int bd, int max_rows, int rows, int* irp, int* rows_per_block){
+int get_rows_per_block(int bd, int rows, int* irp, int* rows_per_block){
 
     int nz = 0, last_i = 0, ctr = 1;
     rows_per_block[0] = 0;
 
-    for (int i = 1; i <= rows; i++) {
+    for (int i = 1; i < rows; i++) {
         nz += irp[i] - irp[i-1]; // count the sum of non-zeros in the considered rows
 
         // the block can process more non-zeros
         if (nz < bd) continue;
 
-        // there are more non-zeros than threads in a block: decrease number of rows for the block
-        if ((nz > bd) && (i - last_i > max_rows)) i-=max_rows;
+        // there are more non-zeros than threads in a block AND
+        // more than max rows were scanned for the block: decrease number of rows for the block
+        if ((nz > bd) && (i - last_i > 1)) --i;
 
         // update rows_per_block
         last_i = i;
@@ -285,36 +175,23 @@ int get_rows_per_block(int bd, int max_rows, int rows, int* irp, int* rows_per_b
 }
 
 void compute_csr_dimensions(CSR* csr, int k, int* blocks, int *num_blocks, dim3* BLOCK_DIM, dim3* GRID_DIM,
-                            int *shared_mem, int *max_rows){
+                            int *shared_mem){
 
     int m = csr->M, nz = csr->NZ, *irp = csr->IRP;
 
-    // 1D block dimension: average number of non-zeros per row
+    // 1D block dimension: average number of non-zeros per row.
     int bd = ROUND_UP_MULT(ROUND_UP(nz,m), WARP_SIZE); // round up the size of the block to a multiple of warpSize
     if (bd > MAX_THREADS_BLOCK) bd = MAX_THREADS_BLOCK; // check maximum threads per block limit
 
-    // BD defines the limit on the maximum number of rows that discriminates the use of
-    // the stream or the vector kernel to avoid wasting some warps using only a fixed number of rows
-    int mr = bd / WARP_SIZE;
-
-    // k cannot be higher than 192 when BD is 32
-    int mem_k = k * sizeof(Type);
-    unsigned int shm = (k < bd) ? bd * mem_k : 0;
-    if (shm > MAX_SHM) { // check maximum shared memory per block limit
-        shm = MAX_SHM;
-        bd = ROUND_DOWN_MULT(shm/mem_k, WARP_SIZE); // reduce block dimension to avoid overflowing shared memory
-        mr = bd / WARP_SIZE;
-    }
+    // no need to check memory limit for the limit on BD will limit the memory to 1024 * 8
+    unsigned int shm = (k < WARP_SIZE) ? bd * sizeof(Type) : 0;
 
     // 1D grid dimension: compute row balancing on blocks and number of blocks needed
-    int nb = get_rows_per_block(bd, mr, m, irp, blocks);
+    int nb = get_rows_per_block(bd, m, irp, blocks);
 
     // output
     *BLOCK_DIM = dim3(bd);
-    *max_rows = mr;
     *shared_mem = shm;
     *num_blocks = nb;
     *GRID_DIM = dim3(nb-1);
-
-    printf("Rows = %d, NNZ = %d, BD = %d, GD = %d, SHM = %d\n", m, nz, bd, nb-1, shm);
 }

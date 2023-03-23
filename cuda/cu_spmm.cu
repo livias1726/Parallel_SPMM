@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
     int maxnz;
 #else
     CSR *csr;
-    int max_rows, num_blocks, *blocks;
+    int num_blocks, *blocks;
     int *d_irp, *d_blocks;
 #endif
 
@@ -105,13 +105,13 @@ int main(int argc, char** argv) {
     spmm_ell_kernel<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, maxnz, d_ja, d_as, d_x, k, d_y);
 #else
     blocks = (int*)malloc((m+1)*sizeof(int));
-    compute_csr_dimensions(csr, k, blocks, &num_blocks, &BLOCK_DIM, &GRID_DIM, &shared_mem, &max_rows);
+    compute_csr_dimensions(csr, k, blocks, &num_blocks, &BLOCK_DIM, &GRID_DIM, &shared_mem);
     checkCudaErrors(cudaMalloc((void**) &d_blocks, num_blocks*sizeof(int)));
     checkCudaErrors(cudaMemcpy(d_blocks, blocks, num_blocks*sizeof(int), cudaMemcpyHostToDevice));
 
     // product
     timer->start();
-    spmm_csr_adaptive_kernel<<<GRID_DIM, BLOCK_DIM, shared_mem>>>(d_irp, d_ja, d_as, k, max_rows, d_x, d_blocks, d_y);
+    spmm_csr_vector_kernel<<<GRID_DIM, BLOCK_DIM, shared_mem>>>(d_irp, d_ja, d_as, k, d_x, d_blocks, d_y);
 #endif
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
