@@ -24,8 +24,6 @@ extern "C"{
 
 // UTILS
 #define FULL_WARP_MASK 0xffffffff
-#define GET_MAX(a, b) if (a < b) {a = b;}
-#define ROUND_UP_MULT(a, b) ((a + (b-1))/b) * b
 
 //--------------------------------------------- Signatures ---------------------------------------------------------//
 void process_arguments(int argc, char **argv, FILE **f, int *k);

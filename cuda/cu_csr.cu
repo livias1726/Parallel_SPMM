@@ -163,7 +163,7 @@ __device__ void spmm_csr_stream_large(const int *irp, const int *ja, const Type 
  * the non-zeros assigned to the block are covered, while the reduction considering the rows is done after.
  * */
 __device__ void spmm_csr_stream_small(const int *irp, const int *ja, const Type *as, int row_start, int row_end,
-                                       int k, const Type* x, Type* y){
+                                      int k, const Type* x, Type* y){
 
     extern __shared__ Type LDS[]; // each thread has a cell for every nz it should process: tot_nz/sub_blocks
 
@@ -194,7 +194,6 @@ __device__ void spmm_csr_stream_small(const int *irp, const int *ja, const Type 
         int j;
 
         for (int i = row_start + sbid; i < row_end; i += sub_blocks){ // each sub-block takes the a row
-
             tmp = 0.0;
             for (j = (irp[i] - first_nz); j < (irp[i + 1] - first_nz); j++){ // each thread in the sub-block sums up
                 tmp += LDS[lds_row + j];
@@ -202,7 +201,6 @@ __device__ void spmm_csr_stream_small(const int *irp, const int *ja, const Type 
             y[i * k + tid_sb] = tmp;
         }
     }
-    //__syncthreads();
 }
 
 /**
@@ -222,8 +220,6 @@ __device__ void spmm_csr_vector(const int *irp, const int *ja, const Type *as, i
 
 /**
  * STREAM KERNEL: streams into the shared memory each individual product related to the NZs assigned to the block
- *
- *
  * */
 __device__ void spmm_csr_stream(const int *irp, const int *ja, const Type *as, int row_start, int row_end,
                                 int k, const Type* x, Type* y){
@@ -248,15 +244,11 @@ __global__ void spmm_csr_adaptive_kernel(const int *irp, const int *ja, const Ty
     int block_row_end = blocks[blockIdx.x + 1];
     int rows = block_row_end - block_row_start;
 
-    spmm_csr_stream(irp, ja, as, block_row_start, block_row_end, k, x, y);
-
-    /*
     if (rows > max_rows) { // non-zeros can fit into the LDS
         spmm_csr_stream(irp, ja, as, block_row_start, block_row_end, k, x, y);
     } else { // the single row is too large to fit into the LDS with a streaming algorithm
         spmm_csr_vector(irp, ja, as, block_row_start, block_row_end, k, x, y);
     }
-     */
 }
 
 /**
@@ -264,21 +256,23 @@ __global__ void spmm_csr_adaptive_kernel(const int *irp, const int *ja, const Ty
  *
  * Inspired by Algorithm 2 of Greathouse, Daga - "Efficient Sparse Matrix-Vector Multiplication
  * on GPUs using the CSR Storage Format"
+ *
+ * NOTE: the loop condition was changed (i <= rows) wrt the original algorithm (i < rows)
+ *       to avoid overflowing shared memory when last blocks receives more nnz than it can handle in memory.
  * */
-int get_rows_per_block(int bd, /*int shm,*/ int max_rows, int rows, int k, int* irp, int* rows_per_block){
+int get_rows_per_block(int bd, int max_rows, int rows, int* irp, int* rows_per_block){
 
     int nz = 0, last_i = 0, ctr = 1;
     rows_per_block[0] = 0;
 
-    for (int i = 1; i < rows; i++) {
+    for (int i = 1; i <= rows; i++) {
         nz += irp[i] - irp[i-1]; // count the sum of non-zeros in the considered rows
 
         // the block can process more non-zeros
         if (nz < bd) continue;
 
-        // there are more non-zeros than threads in a block AND
-        // more than max rows were scanned for the block: decrease number of rows for the block
-        if ((nz > bd) && (i - last_i > 1)) --i;
+        // there are more non-zeros than threads in a block: decrease number of rows for the block
+        if ((nz > bd) && (i - last_i > max_rows)) i-=max_rows;
 
         // update rows_per_block
         last_i = i;
@@ -295,23 +289,25 @@ void compute_csr_dimensions(CSR* csr, int k, int* blocks, int *num_blocks, dim3*
 
     int m = csr->M, nz = csr->NZ, *irp = csr->IRP;
 
-    // 1D block dimension: average number of non-zeros per row.
-    // NOTE: this may not be optimal, but it is appropriate to manage the shared memory.
+    // 1D block dimension: average number of non-zeros per row
     int bd = ROUND_UP_MULT(ROUND_UP(nz,m), WARP_SIZE); // round up the size of the block to a multiple of warpSize
-    //bd <<= 3; // TODO: test a greater dimension
     if (bd > MAX_THREADS_BLOCK) bd = MAX_THREADS_BLOCK; // check maximum threads per block limit
 
     // BD defines the limit on the maximum number of rows that discriminates the use of
     // the stream or the vector kernel to avoid wasting some warps using only a fixed number of rows
     int mr = bd / WARP_SIZE;
 
-    // With the vector kernel (k < warpSize), the block needs a maximum of bd * sizeof(Type) bytes shared memory.
-    // With the stream kernel (k < bd), the block needs a maximum of bd * k * sizeof(Type) bytes shared memory.
-    unsigned int shm = (k < bd) ? bd * k * sizeof(Type) : 0;
-    if (shm > MAX_SHM) shm = MAX_SHM; // check maximum shared memory per block limit
+    // k cannot be higher than 192 when BD is 32
+    int mem_k = k * sizeof(Type);
+    unsigned int shm = (k < bd) ? bd * mem_k : 0;
+    if (shm > MAX_SHM) { // check maximum shared memory per block limit
+        shm = MAX_SHM;
+        bd = ROUND_DOWN_MULT(shm/mem_k, WARP_SIZE); // reduce block dimension to avoid overflowing shared memory
+        mr = bd / WARP_SIZE;
+    }
 
     // 1D grid dimension: compute row balancing on blocks and number of blocks needed
-    int nb = get_rows_per_block(bd, /*shm,*/ mr, m, k, irp, blocks);
+    int nb = get_rows_per_block(bd, mr, m, irp, blocks);
 
     // output
     *BLOCK_DIM = dim3(bd);
@@ -319,4 +315,6 @@ void compute_csr_dimensions(CSR* csr, int k, int* blocks, int *num_blocks, dim3*
     *shared_mem = shm;
     *num_blocks = nb;
     *GRID_DIM = dim3(nb-1);
+
+    printf("Rows = %d, NNZ = %d, BD = %d, GD = %d, SHM = %d\n", m, nz, bd, nb-1, shm);
 }
