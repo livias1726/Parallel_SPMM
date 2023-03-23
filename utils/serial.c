@@ -14,6 +14,7 @@ void serial_product_csr(CSR* mat, const Type* x, int k, Type* y){
 
     int ry, rx, j, z;
     Type val;
+
     for (int i = 0; i < m; i++) {
         ry = i*k;
 

@@ -46,7 +46,7 @@ __device__ void spmm_csr_vector_large(const int *irp, const int *ja, const Type 
             tid_k = (z * warpSize) + tid_w;   // column of x each thread will read
 
             if (tid_k < k) {
-                tmp = 0.0;
+                tmp = 0.0f;
                 for (j = irp[i]; j < irp[i+1]; j++) {
                     // whole warp takes the same non-zero and each thread takes the specific value of x
                     tmp += as[j] * x[ja[j] * k + tid_k];
@@ -78,7 +78,7 @@ __device__ void spmm_csr_vector_small(const int *irp, const int *ja, const Type 
     int tid_sw = tid_w % k;                 // thread id in the sub warp
     int wid = tid_b / warpSize;             // warp id in the block
     int swid = tid_w / k;                   // sub warp id in the warp
-    int warps = blockDim.x / warpSize;  // number of warps in the block
+    int warps = blockDim.x / warpSize;      // number of warps in the block
     int sub_warps = warpSize / k;           // number of sub warps in the warp (truncated one excluded)
 
     // reduction setup
@@ -91,44 +91,35 @@ __device__ void spmm_csr_vector_small(const int *irp, const int *ja, const Type 
     unsigned mask = __ballot_sync(FULL_WARP_MASK, tid_w < s);
     int excluded = sub_warps - first_pot;
 
-    int j, r_y, sj, ej;
+    int j, r_y;
     for (int i = start + wid; i < end; i += warps) { // warp takes the row
         r_y = i * k;
-        sj = irp[i];
-        ej = irp[i+1];
-
-        LDS[tid_b] = 0.0;
 
         // ACCUMULATION
+        LDS[tid_b] = 0.0;
         if (swid != sub_warps) { // excludes the truncated sub-warp
-            for (j = sj + swid; j < ej; j += sub_warps) { // sub warp takes the non-zero
+            for (j = irp[i] + swid; j < irp[i+1]; j += sub_warps) { // sub warp takes the non-zero
                 // thread in sub warp takes the specific value of x
                 LDS[tid_b] += as[j] * x[ja[j] * k + tid_sw];
             }
         }
-        //__syncwarp();
 
         /*
          * REDUCTION 1: values of sub-warps not involved in the warp reduction phase are accumulated
          * in parallel by the other sub-warps.
          * */
-        if (swid < excluded) LDS[tid_b] += LDS[tid_b + first_pot * k];
-        //__syncwarp();
+        if (swid < excluded) LDS[tid_b] += LDS[tid_b + s];
 
         // REDUCTION 2
         if (swid < first_pot) LDS[tid_b] = sub_reduce(mask, s>>1, k, LDS[tid_b]);
 
         // update
         if (swid == 0) y[r_y + tid_sw] = LDS[tid_b];
-        //__syncwarp();
     }
 }
 
 /**
  * VECTOR KERNEL: 1 warp per matrix row.
- *
- * Each warp is divided into warpSize/k sub-blocks to perform the products on x's columns in parallel:
- * - There's an eventual waste of warpSize % k threads.
  * */
 __global__ void spmm_csr_vector_kernel(const int *irp, const int *ja, const Type *as, int k, const Type* x,
                                          int* blocks, Type* y) {
@@ -136,7 +127,7 @@ __global__ void spmm_csr_vector_kernel(const int *irp, const int *ja, const Type
     int start = blocks[blockIdx.x];
     int end = blocks[blockIdx.x + 1];
 
-    if (k > warpSize >> 1) {
+    if (k >= warpSize >> 1) {
         spmm_csr_vector_large(irp, ja, as, start, end, k, x, y);
     } else {
         spmm_csr_vector_small(irp, ja, as, start, end, k, x, y);

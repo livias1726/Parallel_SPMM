@@ -47,7 +47,7 @@ void clean_up(int size, void **p){
  * Computes the absolute and relative error of the parallel product
  * computation (wrt the serial one) using the infinity norm.
  * */
-void get_errors(int elems, Type* seq, Type* par, Type* abs, Type* rel){ // prof version
+void get_errors(int elems, Type* seq, Type* par, Type* abs, Type* rel){
 
     Type max_abs, diff_abs, diff = 0.0, rel_diff = 0.0;
 
@@ -66,10 +66,10 @@ void get_errors(int elems, Type* seq, Type* par, Type* abs, Type* rel){ // prof 
     *rel = rel_diff;
 }
 
-/*
-void get_errors(int elems, Type* seq, Type* par, Type* abs, Type* rel){
+ /*
+void get_errors(int elems, Type* seq, Type* par, double* abs, double* rel){
 
-    Type max_diff = 0.0, max_norm = 0.0;
+    double max_diff = 0.0, max_norm = 0.0;
 
     for (int i = 0; i < elems; i++) {
         max_diff = MAX(max_diff, fabs(par[i] - seq[i]));
@@ -79,4 +79,4 @@ void get_errors(int elems, Type* seq, Type* par, Type* abs, Type* rel){
     *abs = max_diff;
     *rel = max_diff/max_norm;
 }
- */
+  */
