@@ -2,9 +2,9 @@
 
 __device__ Type sub_reduce(int s, int end, Type sum){
     for(; s >= end; s >>= 1) {
-        //if (blockIdx.x == 0 && blockIdx.y == 0) printf("1) %d. T(%d,%d) - %f\n", s, threadIdx.x, threadIdx.y, sum);
+        if (blockIdx.x == 0 && blockIdx.y == 0) printf("1) %d. T(%d,%d) - %f\n", s, threadIdx.x, threadIdx.y, sum);
         sum += __shfl_down_sync(FULL_WARP_MASK, sum, s);
-        //if (blockIdx.x == 0 && blockIdx.y == 0) printf("2) %d. T(%d,%d) - %f\n", s, threadIdx.x, threadIdx.y, sum);
+        if (blockIdx.x == 0 && blockIdx.y == 0) printf("2) %d. T(%d,%d) - %f\n", s, threadIdx.x, threadIdx.y, sum);
     }
     return sum;
 }
@@ -23,7 +23,8 @@ __global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const Type *
 
     extern __shared__ Type LDS[];
 
-    int tx = threadIdx.x, ty = threadIdx.y, bx = blockIdx.x, by = blockIdx.y;
+    int tx = threadIdx.x, ty = threadIdx.y;
+    int bx = blockIdx.x, by = blockIdx.y;
     int bdx = blockDim.x, bdy = blockDim.y;
 
     const int i = tx + (bdx * bx);  // global row of the thread
@@ -31,8 +32,9 @@ __global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const Type *
 
     int r_a = i * maxnz;            // ELL's row associated with the thread
     int tid_shm = tx * bdy + ty;    // LDS cell related to each thread
-    int wid = tid_shm / warpSize;
-    int warps = (bdx * bdy) / warpSize;
+
+    // int wid = tid_shm / warpSize;
+    // int warps = (bdx * bdy) / warpSize;
 
     Type val_a, val_x;
     int idx, j;
@@ -44,8 +46,6 @@ __global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const Type *
         val_a = as[idx];
         val_x = x[ja[idx] * k + by];
         //if (nz_val == 0) break; --> padding reached but warp flow unbroken
-        /*if (bx == 0 && by == 0) printf("T(%d,%d) - AS[%d][%d] (%f) * x[%d][%d] -> LDS[%d][%d]\n",
-                                       tx, ty, i, j, val_a, ja[idx], by, tx, ty);*/
         LDS[tid_shm] += __dmul_rn(val_a, val_x);
     }
     __syncthreads();
@@ -56,7 +56,8 @@ __global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const Type *
     int row_w = warpSize / bdy;
     // since 'bdy' is always a power of 2 <= 32, a warp-level reduction can be executed on the rows
     LDS[tid_shm] = sub_reduce(warpSize>>1, row_w, LDS[tid_shm]);
-    if (ty == 0) y[i * k + by] = LDS[tid_shm];*/
+    if (ty == 0) y[i * k + by] = LDS[tid_shm];
+     */
 
     if (ty == 0) { // first thread of each row reduces partial sums
         for (int pd = 1; pd < bdy; pd++) {
@@ -86,7 +87,7 @@ void compute_ell_dimensions(int m, int maxnz, int k, dim3* BLOCK_DIM, dim3* GRID
 
     *BLOCK_DIM = dim3(bx,by);
 
-    int gdx = ROUND_UP(m,bx); // number of blocks needed to cover A's rows
+    int gdx = ROUND_UP(m,by); // number of blocks needed to cover A's rows
     *GRID_DIM = dim3(gdx,k);
 
     // Cannot reach maximum shared memory: 1024 * 8 < MAX_SHM

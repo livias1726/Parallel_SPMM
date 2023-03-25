@@ -41,17 +41,18 @@ void serial_product_ell(ELL* mat, const Type* x, int k, Type* y){
     int maxnz = mat->MAXNZ, m = mat->M, *ja = mat->JA;
     Type *as = mat->AS;
 
-    int ra, rx, ry, j, z;
+    int ra, rx, ry, j, z, idx;
     Type val;
     for (int i = 0; i < m; i++) {
         ra = i*maxnz;
         ry = i*k;
 
         for (j = 0; j < maxnz; j++) {
-            val = as[ra+j];
-            if (val == 0) break; // if padding is reached break loop
+            idx = ra+j;
+            val = as[idx];
+            //if (val == 0) break; // cannot break product for some matrices still have zero values in the file
 
-            rx = ja[ra+j]*k;
+            rx = ja[idx]*k;
             for (z = 0; z < k; z++) {
                 y[ry+z] += val * x[rx+z];
             }
