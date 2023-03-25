@@ -57,8 +57,8 @@ void get_errors(int elems, Type* seq, Type* par, Type* abs, Type* rel){
         if (max_abs == 0.0) max_abs = 1.0;
 
         diff_abs = fabs(seq[i]-par[i]);
-
         rel_diff = MAX(rel_diff, diff_abs/max_abs);
+
         diff = MAX(diff, diff_abs);
     }
 

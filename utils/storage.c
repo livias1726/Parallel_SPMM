@@ -48,7 +48,12 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: c
             fscanf(f, "%d %d\n", &r, &c);
             elem->val = 1.0;
         } else {
-            fscanf(f, "%d %d %lg\n", &r, &c, &(elem->val));
+            if (sizeof(Type) == 8) {
+                fscanf(f, "%d %d %lf\n", &r, &c, &(elem->val));
+            } else {
+                fscanf(f, "%d %d %f\n", &r, &c, &(elem->val));
+            }
+
         }
 
         elem->j = --c;

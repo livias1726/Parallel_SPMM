@@ -129,8 +129,8 @@ int main(int argc, char** argv) {
     save_result(y_p, m, k);
 #endif
 
-    //print_matrix(y_s, 10, 4, "\nSerial Result:\n");
-    //print_matrix(y_p, 10, 4, "\nParallel Result:\n");
+    //print_matrix(y_s, m, k, "\nSerial Result:\n");
+    //print_matrix(y_p, m, k, "\nParallel Result:\n");
 
 #ifdef DEBUG
     print_matrix(y_s, m, k, "\nSerial Result:\n");

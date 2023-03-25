@@ -1,5 +1,14 @@
 #include "headers/cu_ell.cuh"
 
+__device__ Type sub_reduce(int s, int end, Type sum){
+    for(; s >= end; s >>= 1) {
+        //if (blockIdx.x == 0 && blockIdx.y == 0) printf("1) %d. T(%d,%d) - %f\n", s, threadIdx.x, threadIdx.y, sum);
+        sum += __shfl_down_sync(FULL_WARP_MASK, sum, s);
+        //if (blockIdx.x == 0 && blockIdx.y == 0) printf("2) %d. T(%d,%d) - %f\n", s, threadIdx.x, threadIdx.y, sum);
+    }
+    return sum;
+}
+
 /**
  * Ellpack SpMM kernel
  *
@@ -12,34 +21,78 @@
 __global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const Type *as, const Type *x,
                                 int k, Type* y) {
 
-    extern __shared__ Type LDS[]; // each thread accumulates its partial result on the row
+    extern __shared__ Type LDS[];
 
-    const int i = threadIdx.x + (blockDim.x * blockIdx.x); // global row of the thread
+    int tx = threadIdx.x, ty = threadIdx.y, bx = blockIdx.x, by = blockIdx.y;
+    int bdx = blockDim.x, bdy = blockDim.y;
+
+    const int i = tx + (bdx * bx);  // global row of the thread
     if (i >= rows) return;
 
-    Type nz_val;
-    int idx = i * maxnz;
-    int sm_base = threadIdx.x * blockDim.x;
-    int sm_thread = sm_base + threadIdx.y;
-    int j;
-    LDS[sm_thread] = 0.0;
-    for (int jj = threadIdx.y; jj < maxnz; jj += blockDim.y) {
-        idx += jj;
-        nz_val = as[idx];
+    int r_a = i * maxnz;            // ELL's row associated with the thread
+    int tid_shm = tx * bdy + ty;    // LDS cell related to each thread
+    int wid = tid_shm / warpSize;
+    int warps = (bdx * bdy) / warpSize;
+
+    Type val_a, val_x;
+    int idx, j;
+
+    // ACCUMULATION
+    LDS[tid_shm] = 0.0;
+    for (j = ty; j < maxnz; j += bdy) {
+        idx = r_a + j;
+        val_a = as[idx];
+        val_x = x[ja[idx] * k + by];
         //if (nz_val == 0) break; --> padding reached but warp flow unbroken
-        j = ja[idx];
-        LDS[sm_thread] += __dmul_rn(nz_val, x[j * k + blockIdx.y]);
+        /*if (bx == 0 && by == 0) printf("T(%d,%d) - AS[%d][%d] (%f) * x[%d][%d] -> LDS[%d][%d]\n",
+                                       tx, ty, i, j, val_a, ja[idx], by, tx, ty);*/
+        LDS[tid_shm] += __dmul_rn(val_a, val_x);
     }
     __syncthreads();
 
-    // reduce
-    if (threadIdx.y == 0) { // first thread of each row reduces partial sums
-        //if (i == 0 && blockIdx.y == 0) printf("%d\n", maxnz);
-        for (int pd=1; pd<blockDim.y; pd++) {
-            LDS[sm_base] += LDS[sm_base + pd];
+    // TODO: try to configure a warp reduction
+    // REDUCTION
+    /*
+    int row_w = warpSize / bdy;
+    // since 'bdy' is always a power of 2 <= 32, a warp-level reduction can be executed on the rows
+    LDS[tid_shm] = sub_reduce(warpSize>>1, row_w, LDS[tid_shm]);
+    if (ty == 0) y[i * k + by] = LDS[tid_shm];*/
+
+    if (ty == 0) { // first thread of each row reduces partial sums
+        for (int pd = 1; pd < bdy; pd++) {
+            LDS[tid_shm] += LDS[tid_shm + pd];
         }
-        y[i * k + blockIdx.y] = LDS[sm_base];
+        y[i * k + by] = LDS[tid_shm];
     }
+}
+
+void compute_ell_dimensions(int m, int maxnz, int k, dim3* BLOCK_DIM, dim3* GRID_DIM, int *shared_mem){
+    // 2D BLOCKS
+    int bx, by; // number of rows and threads per
+    // by -> find the smaller number that evenly divides WARP_SIZE that is higher than maxnz
+    for (int i = WARP_SIZE >> 1; i > 0; i >>= 1) {
+        if (maxnz > i) {
+            by = i << 1;
+            break;
+        }
+    }
+    // bx -> each block will have at least WARP_SIZE / by rows to have BD multiple of WARP_SIZE
+    int row_w = WARP_SIZE / by;
+    bx = row_w;
+    // increase by a factor of 'row_w' to increase the number of warps in the block
+    while (bx < m && bx * by < MAX_THREADS_BLOCK) {
+        bx += row_w;
+    }
+
+    *BLOCK_DIM = dim3(bx,by);
+
+    int gdx = ROUND_UP(m,bx); // number of blocks needed to cover A's rows
+    *GRID_DIM = dim3(gdx,k);
+
+    // Cannot reach maximum shared memory: 1024 * 8 < MAX_SHM
+    *shared_mem = bx * by * sizeof(Type);
+
+    printf("BLOCK [%d][%d] - GRID [%d][%d] - SHM = %d\n", bx, by, gdx, k, *shared_mem);
 }
 
 void alloc_cuda_ell(ELL* ell, int **d_ja, Type **d_as){
@@ -56,15 +109,4 @@ void alloc_cuda_ell(ELL* ell, int **d_ja, Type **d_as){
 
     checkCudaErrors(cudaMemcpy(*d_ja, ja, size_ja, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(*d_as, as, size_as, cudaMemcpyHostToDevice));
-}
-
-void compute_ell_dimensions(int m, int maxnz, int k,
-                            dim3* BLOCK_DIM, dim3* GRID_DIM, int *shared_mem){
-    // 2D BLOCKS
-    *BLOCK_DIM = dim3(BDX,BDY);
-
-    const int gdx = GET_SUP_INT(m,BDX)
-
-    *GRID_DIM = dim3(gdx, k);
-    *shared_mem = BDX*BDY*sizeof(Type);
 }

@@ -21,25 +21,6 @@ void process_arguments(int argc, char** argv, FILE **f, int* k){
     *k = (int)strtol(argv[2], NULL, 10);
 }
 
-void alloc_cuda_csr(CSR* csr, int **d_irp, int **d_ja, Type **d_as){
-    int m = csr->M;
-    int nz = csr->NZ;
-    int size_irp = (m+1)*sizeof(int);
-    int size_ja = nz*sizeof(int);
-    int size_as = nz*sizeof(Type);
-
-    int *irp = csr->IRP, *ja = csr->JA;
-    Type *as = csr->AS;
-
-    checkCudaErrors(cudaMalloc((void**) d_irp, size_irp));
-    checkCudaErrors(cudaMalloc((void**) d_ja, size_ja));
-    checkCudaErrors(cudaMalloc((void**) d_as, size_as));
-
-    checkCudaErrors(cudaMemcpy(*d_irp, irp, size_irp, cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy(*d_ja, ja, size_ja, cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy(*d_as, as, size_as, cudaMemcpyHostToDevice));
-}
-
 void alloc_cuda_spmm(Type **d_x, Type **d_y, const Type *x, int m, int n, int k){
 
     int size_partial = k * sizeof(Type);
