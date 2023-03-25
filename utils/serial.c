@@ -50,8 +50,8 @@ void serial_product_ell(ELL* mat, const Type* x, int k, Type* y){
         for (j = 0; j < maxnz; j++) {
             idx = ra+j;
             val = as[idx];
-            //if (val == 0) break; // cannot break product for some matrices still have zero values in the file
-
+            if (val == 0) break;    // to be commented when zero values are included
+                                    // cannot break product for some matrices still have zero values in the file
             rx = ja[idx]*k;
             for (z = 0; z < k; z++) {
                 y[ry+z] += val * x[rx+z];

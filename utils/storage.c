@@ -54,6 +54,12 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: c
                 fscanf(f, "%d %d %f\n", &r, &c, &(elem->val));
             }
 
+            // some matrices still have zero values in their representation: this condition avoids
+            if (elem->val == 0) {
+                free(elem);
+                *nz -= 1;
+                continue;
+            }
         }
 
         elem->j = --c;
