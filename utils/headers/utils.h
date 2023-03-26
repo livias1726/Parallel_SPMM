@@ -16,8 +16,9 @@
 #define ROUND_UP(a,b) ((a+b-1)/b)
 #define ROUND_UP_MULT(a, b) (ROUND_UP(a,b) * b)
 #define MAX(a,b) (a > b ? a : b)
+#define MIN(a,b) (a < b ? a : b)
 
-#define Type double
+typedef double Type;
 
 /**
  * Elem:

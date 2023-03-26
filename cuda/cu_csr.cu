@@ -187,21 +187,23 @@ void compute_csr_dimensions(CSR* csr, int k, int* blocks, int *num_blocks, dim3*
     *GRID_DIM = dim3(nb-1);
 }
 
-void alloc_cuda_csr(CSR* csr, int **d_irp, int **d_ja, Type **d_as){
-    int m = csr->M;
-    int nz = csr->NZ;
+void alloc_cuda_csr(CSR* csr, int* blocks, int num_blocks, int **d_irp, int **d_ja, Type **d_as, int **d_blocks){
+    int m = csr->M, nz = csr->NZ;
+    int *irp = csr->IRP, *ja = csr->JA;
+    Type *as = csr->AS;
+
     int size_irp = (m+1)*sizeof(int);
     int size_ja = nz*sizeof(int);
     int size_as = nz*sizeof(Type);
-
-    int *irp = csr->IRP, *ja = csr->JA;
-    Type *as = csr->AS;
+    int size_blocks = num_blocks*sizeof(int);
 
     checkCudaErrors(cudaMalloc((void**) d_irp, size_irp));
     checkCudaErrors(cudaMalloc((void**) d_ja, size_ja));
     checkCudaErrors(cudaMalloc((void**) d_as, size_as));
+    checkCudaErrors(cudaMalloc((void**) d_blocks, size_blocks));
 
     checkCudaErrors(cudaMemcpy(*d_irp, irp, size_irp, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(*d_ja, ja, size_ja, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(*d_as, as, size_as, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(*d_blocks, blocks, size_blocks, cudaMemcpyHostToDevice));
 }

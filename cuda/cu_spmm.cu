@@ -5,25 +5,27 @@
 #endif
 
 int main(int argc, char** argv) {
-    // host
+
     MM_typecode t;
     FILE *f;
     int k, m, n, nz;
+
     double flop, gflops_s, gflops_p;
     Type abs_err, rel_err;
-    Type *x, *y_s, *y_p;
-    // device
-    Type *d_x, *d_y, *d_as;
+
+    Type *x, *d_x, *y_s, *y_p, *d_y;
+
+    Type *d_as;
     int *d_ja;
+
     StopWatchInterface* timer = 0;
-    // dimensions
-    dim3 BLOCK_DIM;
-    dim3 GRID_DIM;
+    dim3 BLOCK_DIM, GRID_DIM;
     int shared_mem;
 
 #ifdef ELLPACK
-    ELL *ell;
-    int maxnz;
+    ELL *ell;   // used for serial product and as input to compute an HELL structure
+    HLL *hll; // used for gpu product
+    int *d_maxnz, *d_hack_offset;
 #else
     CSR *csr;
     int num_blocks, *blocks;
@@ -66,15 +68,11 @@ int main(int argc, char** argv) {
     #ifdef DEBUG
     print_ell(ell);
     #endif
-
-    alloc_cuda_ell(ell, &d_ja, &d_as);
 #else
     csr = read_mm_csr(elems, m, n, nz);
-#ifdef DEBUG
+    #ifdef DEBUG
     print_csr(csr);
-#endif
-
-    alloc_cuda_csr(csr, &d_irp, &d_ja, &d_as);
+    #endif
 #endif
 
     // ------------------------------------------- Serial CPU SpMM --------------------------------------------- //
@@ -92,29 +90,29 @@ int main(int argc, char** argv) {
 
     // --------------------------------------------- GPU SpMM -------------------------------------------------- //
 
-    //to avoid bank conflicts since double values are used
+    // to avoid bank conflicts when double values are used
     if (sizeof(Type) == 8) checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
 
-    // Compute BLOCK_DIM --> each block works on a sub-matrix of A (bdy x n) and a sub-matrix of x (n x bdx)
 #ifdef ELLPACK
-    maxnz = ell->MAXNZ;
-    compute_ell_dimensions(m, maxnz, k, &BLOCK_DIM, &GRID_DIM, &shared_mem);
+    // compute_ell_dimensions(m, maxnz, k, &BLOCK_DIM, &GRID_DIM, &shared_mem);
+    compute_hll_dimensions(ell, k, &hll, &BLOCK_DIM, &GRID_DIM, &shared_mem);
+    alloc_cuda_hll(hll, GRID_DIM.x, &d_maxnz, &d_hack_offset, &d_ja, &d_as);
 
     // product
     timer->start();
-    spmm_ell_kernel<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, maxnz, d_ja, d_as, d_x, k, d_y);
+    //spmm_ell_kernel<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, maxnz, d_ja, d_as, d_x, k, d_y);
+    spmm_hll_kernel<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, d_maxnz, d_hack_offset, d_ja, d_as, d_x, k, d_y);
 #else
     blocks = (int*)malloc((m+1)*sizeof(int));
     compute_csr_dimensions(csr, k, blocks, &num_blocks, &BLOCK_DIM, &GRID_DIM, &shared_mem);
-    checkCudaErrors(cudaMalloc((void**) &d_blocks, num_blocks*sizeof(int)));
-    checkCudaErrors(cudaMemcpy(d_blocks, blocks, num_blocks*sizeof(int), cudaMemcpyHostToDevice));
+    alloc_cuda_csr(csr, blocks, num_blocks, &d_irp, &d_ja, &d_as, &d_blocks);
 
     // product
     timer->start();
     spmm_csr_vector_kernel<<<GRID_DIM, BLOCK_DIM, shared_mem>>>(d_irp, d_ja, d_as, k, d_x, d_blocks, d_y);
 #endif
     checkCudaErrors(cudaGetLastError());
-    checkCudaErrors(cudaDeviceSynchronize());
+    //checkCudaErrors(cudaDeviceSynchronize());
     timer->stop();
 
     gflops_p = (double)flop/((timer->getTime())*1.e6);
@@ -129,18 +127,14 @@ int main(int argc, char** argv) {
     save_result(y_p, m, k);
 #endif
 
-    //print_matrix(y_s, 26, k, "\nSerial Result:\n");
-    //print_matrix(y_p, 26, k, "\nParallel Result:\n");
-
 #ifdef DEBUG
     print_matrix(y_s, m, k, "\nSerial Result:\n");
     print_matrix(y_p, m, k, "\nParallel Result:\n");
 #endif
 
     // ------------------------------------------- Cleaning up ------------------------------------------------- //
-
 #ifdef ELLPACK
-    delete[] ell;
+    checkCudaErrors(cudaFree(d_maxnz));
 #else
     checkCudaErrors(cudaFree(d_irp));
     checkCudaErrors(cudaFree(d_blocks));
