@@ -29,7 +29,8 @@ void alloc_cuda_ell(ELL* ell, int **d_ja, Type **d_as);
 // H-ELLPACK
 __global__ void spmm_hll_kernel(int rows, const int* maxnz, const int* hack_offset,
                                 const int *ja, const Type *as, const Type *x, int k, Type* y);
-__device__ void spmm_ell(int start, int end, int maxnz, const int *ja, const Type *as, const Type *x, int k, Type* y);
+__device__ void spmm_ell(int rows, int start, /*int end,*/ int maxnz, const int *ja, const Type *as,
+                         const Type *x, int k, Type* y);
 void compute_hll_dimensions(ELL*, int, HLL**, dim3*, dim3*, int*);
 void alloc_cuda_hll(HLL*, int, int**, int**, int**, Type**);
 

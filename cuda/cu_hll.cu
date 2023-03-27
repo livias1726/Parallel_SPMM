@@ -9,36 +9,41 @@ __device__ Type sub_reduce(int s, Type sum){
     return sum;
 }
 
-__device__ void spmm_ell(int start, int end, int maxnz, const int *ja, const Type *as, const Type *x, int k, Type* y){
+__device__ void spmm_ell(int rows, int start, /*int end,*/ int maxnz, const int *ja, const Type *as, const Type *x, int k, Type* y){
 
     extern __shared__ Type LDS[];
 
-    int tx = threadIdx.x, ty = threadIdx.y;
-    int bx = blockIdx.x, by = blockIdx.y;
-    int bdx = blockDim.x, bdy = blockDim.y;
+    const int tx = threadIdx.x, ty = threadIdx.y;
+    const int /*bx = blockIdx.x,*/ by = blockIdx.y;
+    const int /*bdx = blockDim.x,*/ bdy = blockDim.y;
 
-    const int i = tx + (bdx * bx);  // global row of the thread
-    if (i * maxnz >= end) return;
+    const int i = tx + (blockDim.x * blockIdx.x);  // global row id of the thread
+    if (i >= rows) return; // the last block will eventually overflow the total number of rows
 
-    int tid_a = tx * bdy + ty;  // accumulation cell
+    const int s = start + (tx * maxnz);
+    const int tid = tx * bdy + ty;  // accumulation cell
 
-    // ACCUMULATION
-    /*
-    * Each thread takes an element in its row and performs the product with the relative element of x
-    * in column given by blockIdx.y
-    * */
-    int idx, j;
-    LDS[tid_a] = 0.0;
-    for (j = ty; j < maxnz; j += bdy) { // do not break the loop when padding reached to avoid mining warp flow
-        idx = i + j;
-        LDS[tid_a] += __dmul_rn(as[idx], x[ja[idx] * k + by]);
+    /* *
+     * ACCUMULATION
+     *      Each thread takes the elements at index multiple of ty
+     *      in its row (tx) and performs the product with the element of x
+     *      in column given by blockIdx.y
+     * */
+    int idx;
+    LDS[tid] = 0.0;
+    for (int j = ty; j < maxnz; j += bdy) { // do not break the loop when padding reached to avoid mining warp flow
+        idx = s + j;
+        LDS[tid] += __dmul_rn(as[idx], x[ja[idx] * k + by]);
     }
     __syncthreads();
 
-    // TODO: try to configure a warp reduction
-    // REDUCTION
+    /* *
+     * REDUCTION
+     *      TODO: try to configure a warp reduction
+     *      since 'bdy' is always a power of 2 <= 32, a warp-level reduction can be executed on the rows
+     * */
+
     // int row_w = warpSize / bdy;
-    // since 'bdy' is always a power of 2 <= 32, a warp-level reduction can be executed on the rows
     /*
     LDS[tid_r] = sub_reduce(warpSize>>1, LDS[tid_r]);
     __syncthreads();
@@ -46,15 +51,13 @@ __device__ void spmm_ell(int start, int end, int maxnz, const int *ja, const Typ
     if (ty == 0) y[i * k + by] = LDS[tid_a];
     */
 
-    /*
-    * The first thread of each row reduces the partial sums
-    * */
-    int shift;
+    /* *
+     * REDUCTION
+     *      The first thread of each row reduces the partial sums
+     * */
     if (ty == 0) {
-        for (shift = 1; shift < bdy; shift++) {
-            LDS[tid_a] += LDS[tid_a + shift];
-        }
-        y[i * k + by] = LDS[tid_a];
+        for (idx = 1; idx < bdy; idx++) { LDS[tid] += LDS[tid + idx]; }
+        y[i * k + by] = LDS[tid];
     }
 }
 
@@ -63,14 +66,15 @@ __global__ void spmm_hll_kernel(int rows, const int* maxnz, const int* hack_offs
     int bid = blockIdx.x;
     int mnz = maxnz[bid];
     int start = hack_offset[bid];
-    int end = hack_offset[bid + 1];
+    //int end = hack_offset[bid + 1];
 
-    spmm_ell(start, end, mnz, ja, as, x, k, y);
+    spmm_ell(rows, start, /*end,*/ mnz, ja, as, x, k, y);
 }
 
 dim3 get_block_dimensions(int m, int maxnz){
     // 2D BLOCKS
-    int bx, by; // number of rows and threads per
+    int bx, by;
+
     // by -> find the smaller number that evenly divides WARP_SIZE that is higher than maxnz
     for (int i = WARP_SIZE >> 1; i > 0; i >>= 1) {
         if (maxnz > i) {
@@ -78,17 +82,20 @@ dim3 get_block_dimensions(int m, int maxnz){
             break;
         }
     }
+
     // bx -> each block will have at least WARP_SIZE / by rows to have BD multiple of WARP_SIZE
     int row_w = WARP_SIZE / by;
     bx = row_w;
+
     // increase by a factor of 'row_w' to increase the number of warps in the block
-    while (bx < m && bx * by < MAX_THREADS_BLOCK) {
-        bx += row_w;
-    }
+    while (bx < m && bx * by < MAX_THREADS_BLOCK) bx += row_w;
 
     return dim3(bx,by);
 }
 
+/*
+ * Retrieve the maxnz value for each hack
+ * */
 int get_maxnz(int rows, int cols, int rb, Type* as, int *mnz){
     int i, j, new_dim, row;
     int b_ctr = 0, nz_ctr = 0, max = 0;
@@ -96,6 +103,7 @@ int get_maxnz(int rows, int cols, int rb, Type* as, int *mnz){
     int s = 0, e;
     do {
         e = MIN(rows,s+rb);
+
         for (i = s; i < e; i++) {
             row = i * cols;
             for (j = 0; j < cols; j++) {
@@ -117,24 +125,30 @@ int get_maxnz(int rows, int cols, int rb, Type* as, int *mnz){
 }
 
 /**
- * TODO
+ * Build the HLL structure from the original ELL and the kernel dimensions.
+ *
+ * @param ell           original ELL structure
+ * @param hll           pointer to the HLL structure to build
+ * @param bdx           maximum number of rows per block
+ * @param num_blocks    number of blocks to cover every row
  * */
 void get_hll(ELL* ell, HLL **hll, int bdx, int num_blocks){
     int m = ell->M, maxnz = ell->MAXNZ;
+
     int *h_maxnz, *hack_offset, *h_ja;
     Type *h_as;
-
     // build HLL structure
     *hll = (HLL*) malloc(sizeof(HLL));
-
     h_maxnz = (int*) malloc(num_blocks * sizeof(int));
-    int dim = get_maxnz(m, maxnz, bdx, ell->AS, h_maxnz);
-
-    h_ja = (int*)calloc(dim, sizeof(int));
-    h_as = (Type*)calloc(dim, sizeof(Type));
     hack_offset = (int*) malloc((num_blocks + 1) * sizeof(int));
 
-    int i, j, rs, re, mnz, idx1, idx2;
+    int dim = get_maxnz(m, maxnz, bdx, ell->AS, h_maxnz);   // populate h_maxnz and get new dimension of JA and AS
+    h_ja = (int*)calloc(dim, sizeof(int));
+    h_as = (Type*)calloc(dim, sizeof(Type));
+
+    int i, j, rs, re, mnz, e_idx, h_idx = 0;
+    hack_offset[0] = 0;
+    // for every row block re-populate new JA and AS excluding padding overhead
     for (int nb = 0; nb < num_blocks; nb++) {
         mnz = h_maxnz[nb];
         rs = nb * bdx;
@@ -142,14 +156,15 @@ void get_hll(ELL* ell, HLL **hll, int bdx, int num_blocks){
 
         for (i = rs; i < re; i++) {
             for (j = 0; j < mnz; j++) {
-                idx1 = (i * maxnz) + j;
-                idx2 = (i * mnz) + j;
 
-                h_ja[idx2] = ell->JA[idx1];
-                h_as[idx2] = ell->AS[idx1];
+                e_idx = (i * maxnz) + j;
+
+                h_ja[h_idx] = ell->JA[e_idx];
+                h_as[h_idx++] = ell->AS[e_idx];
             }
         }
-        hack_offset[nb] = (nb == 0) ? 0 : rs * h_maxnz[nb-1];
+
+        hack_offset[nb+1] = hack_offset[nb] + (bdx * mnz);  // populate hack offsets
     }
     hack_offset[num_blocks] = dim;
 
@@ -159,29 +174,53 @@ void get_hll(ELL* ell, HLL **hll, int bdx, int num_blocks){
     free(ell);
 
     // populate HLL
-    (*hll)->MAXNZ = h_maxnz;
+    (*hll)->MAXNZ = h_maxnz;            // array of maxnz per block
     (*hll)->JA = h_ja;
     (*hll)->AS = h_as;
     (*hll)->HACK_OFFSET = hack_offset;
 }
 
+/**
+ * Compute the dimensions of the kernel w.r.t. the number of rows and k and builds the HLL structure starting from
+ * these dimensions and the original ELL structure.
+ *
+ * @param ell           original ELL structure
+ * @param k             number of columns in the multi-vector
+ * @param hll           pointer to the HLL structure to build
+ * @param BLOCK_DIM     pointer to the block dimensions
+ * @param GRID_DIM      pointer to the grid dimensions
+ * @param shared_mem    pointer to the amount of shared memory
+ * */
 void compute_hll_dimensions(ELL* ell, int k, HLL **hll, dim3* BLOCK_DIM, dim3* GRID_DIM, int *shared_mem){
-    int m = ell->M, maxnz = ell->MAXNZ;
 
-    // 2D BLOCK
+    int m = ell->M, maxnz = ell->MAXNZ;
+    // 2D BLOCK :
+    // (#rows given to the block) X (minimum between warpSize and maxnz rounded up to a divisor of warpSize)
     dim3 bd = get_block_dimensions(m, maxnz);
-    // 2D GRID
-    dim3 gd = dim3(ROUND_UP(m,bd.x), k); // number of blocks needed to cover A's rows X number of columns of x
+    // 2D GRID : (#blocks needed to cover A's rows) X (#columns of x)
+    dim3 gd = dim3(ROUND_UP(m,bd.x), k);
 
     // build the HLL structure
     get_hll(ell, hll, bd.x, gd.x);
 
-    // 1 cell of shared memory per thread
-    *shared_mem = bd.x * bd.y * sizeof(Type); // cannot reach maximum shared memory: 1024 * 8 < MAX_SHM
+    // 1D SHARED MEM treated like a matrix: 1 cell per block thread
+    // cannot reach maximum shared memory thanks to limit on block size (MAX_THREADS_BLOCK * sizeof(Type) < MAX_SHM)
+    *shared_mem = bd.x * bd.y * sizeof(Type);
+
     *BLOCK_DIM = bd;
     *GRID_DIM = gd;
 }
 
+/**
+ * Allocate and transfer the structures on the device. (HLL version)
+ *
+ * @param hll           HLL structure previously built
+ * @param num_blocks    the number of blocks that takes the different rows (x side of the grid)
+ * @param d_maxnz       the array of maxnz per hack
+ * @param d_hack        the array of hack offsets
+ * @param d_ja          the array of column indices (ELL format)
+ * @param d_as          the array of nz values (ELL format)
+ * */
 void alloc_cuda_hll(HLL* hll, int num_blocks, int **d_maxnz, int **d_hack, int **d_ja, Type **d_as){
     int *maxnz = hll->MAXNZ, *ja = hll->JA, *hack = hll->HACK_OFFSET;
     Type *as = hll->AS;

@@ -29,9 +29,10 @@ void save_result(Type* y, int rows, int cols) {
 
 void print_matrix(Type* mat, int rows, int cols, char* msg){
     fprintf(stdout, "%s", msg);
-    for (int i=0; i < rows; i++) {
+    for (int i=rows; i < 4032; i++/*int i=0; i < rows; i++*/) {
         for (int j=0; j < cols; j++) {
-            fprintf(stdout, "\t%20.19g", mat[i*cols+j]);
+            //fprintf(stdout, "\t%20.19g", mat[i*cols+j]);
+            fprintf(stdout, "\t%20.19g", mat[i]);
         }
         fprintf(stdout, "\n");
     }

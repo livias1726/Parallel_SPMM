@@ -111,8 +111,8 @@ int main(int argc, char** argv) {
     timer->start();
     spmm_csr_vector_kernel<<<GRID_DIM, BLOCK_DIM, shared_mem>>>(d_irp, d_ja, d_as, k, d_x, d_blocks, d_y);
 #endif
-    checkCudaErrors(cudaGetLastError());
-    //checkCudaErrors(cudaDeviceSynchronize());
+    //checkCudaErrors(cudaGetLastError());
+    checkCudaErrors(cudaDeviceSynchronize());
     timer->stop();
 
     gflops_p = (double)flop/((timer->getTime())*1.e6);
@@ -126,6 +126,9 @@ int main(int argc, char** argv) {
 #ifdef SAVE
     save_result(y_p, m, k);
 #endif
+
+    //print_matrix(y_s, m, k, "\nSerial Result:\n");
+    //print_matrix(y_p, m, k, "\nParallel Result:\n");
 
 #ifdef DEBUG
     print_matrix(y_s, m, k, "\nSerial Result:\n");
