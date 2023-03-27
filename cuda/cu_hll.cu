@@ -14,58 +14,59 @@ __device__ void spmm_ell(int rows, int start, /*int end,*/ int maxnz, const int 
     extern __shared__ Type LDS[];
 
     const int tx = threadIdx.x, ty = threadIdx.y;
-    const int /*bx = blockIdx.x,*/ by = blockIdx.y;
-    const int /*bdx = blockDim.x,*/ bdy = blockDim.y;
+    const int bx = blockIdx.x, by = blockIdx.y;
+    const int bdx = blockDim.x, bdy = blockDim.y;
 
-    const int i = tx + (blockDim.x * blockIdx.x);  // global row id of the thread
-    if (i >= rows) return; // the last block will eventually overflow the total number of rows
+    const int i = tx + (bdx * bx);  // global row id of the thread
+    bool flag = true;
+    if (i >= rows) flag = false; // the last block will eventually overflow the total number of rows
 
-    const int s = start + (tx * maxnz);
-    const int tid = tx * bdy + ty;  // accumulation cell
+    const int s = start + (tx * maxnz); // starting element of the thread
+    const int tid = tx * bdy + ty;      // accumulation cell in shared memory
 
     /* *
      * ACCUMULATION
-     *      Each thread takes the elements at index multiple of ty
-     *      in its row (tx) and performs the product with the element of x
-     *      in column given by blockIdx.y
+     *      Each thread takes the elements at (tx, ty (* bdy)), in the hack of the block,
+     *      and performs the product with the element of x in column 'by'.
+     *      Partial sums gets stored in a matrix like manner: LDS[tx = rows][ty = cols].
      * */
-    int idx;
-    LDS[tid] = 0.0;
-    for (int j = ty; j < maxnz; j += bdy) { // do not break the loop when padding reached to avoid mining warp flow
-        idx = s + j;
-        LDS[tid] += __dmul_rn(as[idx], x[ja[idx] * k + by]);
+    if (flag) {
+        int idx;
+        LDS[tid] = 0.0;
+        for (int j = ty; j < maxnz; j += bdy) { // do not break the loop when padding reached to avoid mining warp flow
+            idx = s + j;
+            LDS[tid] += __dmul_rn(as[idx], x[ja[idx] * k + by]);
+        }
     }
     __syncthreads();
 
     /* *
      * REDUCTION
-     *      TODO: try to configure a warp reduction
-     *      since 'bdy' is always a power of 2 <= 32, a warp-level reduction can be executed on the rows
+     *      Each row in LDS has to be reduced, but warps are indexed column-wise,
+     *      meaning that, if threads take their own cell into the reduction,
+     *      values will be reduced by column (sum of values on different rows and same column).
+     *
+     *      To do a correct reduction, threads need to be responsible for the reversed value: LDS[ty][tx].
      * */
-
-    // int row_w = warpSize / bdy;
-    /*
+    int tid_r = ty * bdy + tx;
+    //if (bx == 504 && by == 0 && ty == 0) printf("T(%d,%d) - tid_a = %d, tid_r = %d\n", tx, ty, tid, tid_r);
     LDS[tid_r] = sub_reduce(warpSize>>1, LDS[tid_r]);
     __syncthreads();
+    if (ty == 0) y[i * k + by] = LDS[tid]; // let the first warp take care of the update
 
-    if (ty == 0) y[i * k + by] = LDS[tid_a];
-    */
-
-    /* *
-     * REDUCTION
-     *      The first thread of each row reduces the partial sums
-     * */
+    /*
     if (ty == 0) {
         for (idx = 1; idx < bdy; idx++) { LDS[tid] += LDS[tid + idx]; }
         y[i * k + by] = LDS[tid];
     }
+     */
 }
 
 __global__ void spmm_hll_kernel(int rows, const int* maxnz, const int* hack_offset,
                                 const int *ja, const Type *as, const Type *x, int k, Type* y) {
-    int bid = blockIdx.x;
-    int mnz = maxnz[bid];
-    int start = hack_offset[bid];
+
+    int mnz = maxnz[blockIdx.x];
+    int start = hack_offset[blockIdx.x];
     //int end = hack_offset[bid + 1];
 
     spmm_ell(rows, start, /*end,*/ mnz, ja, as, x, k, y);
