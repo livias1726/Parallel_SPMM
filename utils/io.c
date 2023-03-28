@@ -29,41 +29,50 @@ void save_result(Type* y, int rows, int cols) {
 
 void print_matrix(Type* mat, int rows, int cols, char* msg){
     fprintf(stdout, "%s", msg);
-    for (int i=rows; i < 4032; i++/*int i=0; i < rows; i++*/) {
+    for (int i=0; i < rows; i++) {
         for (int j=0; j < cols; j++) {
-            //fprintf(stdout, "\t%20.19g", mat[i*cols+j]);
-            fprintf(stdout, "\t%20.19g", mat[i]);
+            fprintf(stdout, "\t%.16g", mat[i*cols+j]);
         }
         fprintf(stdout, "\n");
     }
 }
 
 void print_csr(CSR* csr){
+    int m = csr->M, n = csr->N, nz = csr->NZ, *ja = csr->JA, *irp = csr->IRP;
+    Type *as = csr->AS;
+
     fprintf(stdout, "CSR:\n");
-    fprintf(stdout, "\tM: %d, N: %d, NZ: %d\n", csr->M, csr->N, csr->NZ);
+    fprintf(stdout, "\tM: %d, N: %d, NZ: %d\n", m, n, nz);
     fprintf(stdout, "\tRow pointers: [");
-    for (int i=0; i<csr->M-1; i++) {
-        fprintf(stdout, "%d, ", csr->IRP[i]);
+
+    int i;
+    for (i = 0; i < m-1; i++) {
+        fprintf(stdout, "%d, ", irp[i]);
     }
-    fprintf(stdout, "%d]\n", csr->IRP[csr->M-1]);
+    fprintf(stdout, "%d]\n", irp[m-1]);
 
     fprintf(stdout, "Value (Column):\n");
-    for (int i=0; i<csr->NZ-1; i++) {
-        fprintf(stdout, "\t%20.19g (%d)", csr->AS[i], csr->JA[i]);
-        if (i%3 == 2) {
-            fprintf(stdout, "\n");
-        }
+    for (i = 0; i < nz-1; i++) {
+        fprintf(stdout, "\t%.16g (%d)", as[i], ja[i]);
+        if (i%3 == 2) fprintf(stdout, "\n");
     }
-    fprintf(stdout, "\t%20.19g (%d)\n", csr->AS[csr->NZ-1], csr->JA[csr->NZ-1]);
+    fprintf(stdout, "\t%.16g (%d)\n", as[nz-1], ja[nz-1]);
 }
 
 void print_ell(ELL* ell) {
+    int m = ell->M, n = ell->N, maxnz = ell->MAXNZ, *ja = ell->JA;
+    Type *as = ell->AS;
+
     fprintf(stdout, "ELL:\n");
-    fprintf(stdout, "\tM: %d, N: %d, MAXNZ: %d\n", ell->M, ell->N, ell->MAXNZ);
+    fprintf(stdout, "\tM: %d, N: %d, MAXNZ: %d\n", m, n, maxnz);
     fprintf(stdout, "Value (Column):\n\t");
-    for (int i = 0; i < ell->M; i++) {
-        for (int j = 0; j < ell->MAXNZ; j++) {
-            fprintf(stdout, "%20.19g (%d) ", ell->AS[i*ell->MAXNZ + j], ell->JA[i*ell->MAXNZ + j]);
+
+    int row, idx;
+    for (int i = 0; i < m; i++) {
+        row = i * maxnz;
+        for (int j = 0; j < maxnz; j++) {
+            idx = row + j;
+            fprintf(stdout, "%.16g (%d)\t\t", as[idx], ja[idx]);
         }
         fprintf(stdout, "\n\t");
     }

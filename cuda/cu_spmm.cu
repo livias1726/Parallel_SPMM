@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
     // --------------------------------------------- GPU SpMM -------------------------------------------------- //
 
     // to avoid bank conflicts when double values are used
-    if (sizeof(Type) == 8) checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
+    if (!SP) checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
 
 #ifdef ELLPACK
     maxnz = ell->MAXNZ;
@@ -123,6 +123,9 @@ int main(int argc, char** argv) {
 #ifdef SAVE
     save_result(y_p, m, k);
 #endif
+
+    //print_matrix(y_s, 10, k, "\nSerial Result:\n");
+    //print_matrix(y_p, 10, k, "\nParallel Result:\n");
 
 #ifdef DEBUG
     print_matrix(y_s, m, k, "\nSerial Result:\n");

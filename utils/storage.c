@@ -27,7 +27,7 @@ void insert_in_row(Elem** arr, Elem* node, int idx) {
  * @param nz pointer to the number of non-zeros (to be eventually updated)
  * @param t matrix type code
  * */
-Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: check necessity to step through elems
+Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){
     int r, c, i, onz;
 
     // process the matrix size information
@@ -48,13 +48,13 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: c
             fscanf(f, "%d %d\n", &r, &c);
             elem->val = 1.0;
         } else {
-            if (sizeof(Type) == 8) {
-                fscanf(f, "%d %d %lf\n", &r, &c, &(elem->val));
+            if (SP) {
+                fscanf(f, "%d %d %f\n", &r, &c, &(elem->val));  // read single precision
             } else {
-                fscanf(f, "%d %d %f\n", &r, &c, &(elem->val));
+                fscanf(f, "%d %d %lf\n", &r, &c, &(elem->val)); // read double precision
             }
 
-            // some matrices still have zero values in their representation: this condition avoids
+            // some matrices still have zero values in their representation: this condition excludes them
             if (elem->val == 0) {
                 free(elem);
                 *nz -= 1;
@@ -149,7 +149,7 @@ ELL* read_mm_ell(Elem** elems, int m, int n, int nz){
         count = 0;
     }
 
-    //free(elems);
+    free(elems);
     return mat;
 }
 

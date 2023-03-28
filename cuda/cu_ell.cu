@@ -13,6 +13,9 @@ __device__ Type sub_reduce(int s, Type sum){
 * Each block is given a subset of rows in A (using AS and JA) and a column of x.
 * To completely cover A's rows, blocks will eventually need to iterate horizontally on AS and JA and accumulate products.
 * */
+/*
+ * NOTE: see 'get_block_dimensions' description.
+ */
 __global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const Type *as, const Type *x, int k, Type* y) {
 
     extern __shared__ Type LDS[];
@@ -21,80 +24,112 @@ __global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const Type *
     int bx = blockIdx.x, by = blockIdx.y;
     int bdx = blockDim.x, bdy = blockDim.y;
 
-    const int i = tx + (bdx * bx);  // global row of the thread
+    const int i = ty + (bdy * bx); //const int i = tx + (bdx * bx);  // global row of the thread
     if (i >= rows) return;
 
     int r_a = i * maxnz;        // ELL's row associated with the thread
     int tid = tx * bdy + ty;  // accumulation cell
 
-    /*
-     * ACCUMULATION
-     *      Each thread takes an element in its row and performs the product with the relative element of x
-     *      in column given by blockIdx.y
+    /* *
+     * ACCUMULATION:
+     *      Each thread takes an element in its row and performs the product
+     *      with the relative element of x in column given by blockIdx.y
      * */
-    int idx, j;
+    int idx;
     LDS[tid] = 0.0;
-    for (j = ty; j < maxnz; j += bdy) { // do not break the loop when padding reached to avoid mining warp flow
+    for (int j = tx; j < maxnz; j += bdx/*int j = ty; j < maxnz; j += bdy*/) { // do not break the loop when padding reached to avoid mining warp flow
         idx = r_a + j;
-        LDS[tid] += __dmul_rn(as[idx], x[ja[idx] * k + by]);
+        //LDS[tid] += __dmul_rn(as[idx], x[ja[idx] * k + by]);
+        LDS[tid] += __fmul_rn(as[idx], x[ja[idx] * k + by]);
     }
-    __syncthreads();
+    //__syncthreads();
+    __syncwarp();
 
-    /*
+    /* *
      * REDUCTION:
-     *      The first thread of each row reduces the partial sums
+     *      The first thread of each row reduces the partial sums.
      * */
+    LDS[tid] = sub_reduce(bdx>>1, LDS[tid]);
+    if (tx == 0) y[i * k + by] = LDS[tid];
+    /*
     if (ty == 0) {
-        for (j = 1; j < bdy; j++) {
-            LDS[tid] += LDS[tid + j];
-        }
+        for (idx = 1; idx < bdy; idx++) { LDS[tid] += LDS[tid + idx]; }
         y[i * k + by] = LDS[tid];
-    }
+    }*/
 }
 
+/* *
+ * Blocks are dimensioned to cover the Ellpack matrix: x for the rows, y for the columns.
+ * Y.
+ *      The y dimension is set to be the smaller divisor of warp size that reaches MAXNZ
+ *      and set to warp size if MAXNZ is higher than that.
+ * X.
+ *      The x dimension is set to be a factor of warpSize/blockDim.y,
+ *      so that each block will have at least warpSize/blockDim.y rows
+ *      to have a block dimension multiple of warpSize.
+ *      This factor will be increased to reach the total number of rows or the maximum dimension of the block.
+ *
+ * NOTE: this configuration causes warp divergence since warps are indexed by threadIdx.x first.
+ *       Each thread in the warp will be responsible for a different row, accessing the Ellpack matrix by column.
+ * */
 dim3 get_block_dimensions(int m, int maxnz){
     // 2D BLOCKS
-    int bx, by; // number of rows and threads per
-    // by -> find the smaller number that evenly divides WARP_SIZE that is higher than maxnz
-    for (int i = WARP_SIZE >> 1; i > 0; i >>= 1) {
+    int i, max_bx, bx = 0, by;
+
+    // find the smaller number that evenly divides WARP_SIZE and that is higher than maxnz
+    for (i = WARP_SIZE >> 1; i > 0; i >>= 1) {
         if (maxnz > i) {
             by = i << 1;
             break;
         }
     }
-    // bx -> each block will have at least WARP_SIZE / by rows to have BD multiple of WARP_SIZE
-    int row_w = WARP_SIZE / by;
-    bx = row_w;
-    // increase by a factor of 'row_w' to increase the number of warps in the block
-    while (bx < m && bx * by < MAX_THREADS_BLOCK) {
-        bx += row_w;
-    }
 
-    return dim3(bx,by);
+    // increase by a factor of 'warpSize/blockDim.y' to increase the number of warps in the block
+    i = WARP_SIZE / by;
+    max_bx = MAX_THREADS_BLOCK / by;
+    while (bx < m && bx < max_bx) { bx += i; }
+
+    return dim3(by,bx); //return dim3(bx,by);
 }
 
-void compute_ell_dimensions(int m, int maxnz, int k, dim3* BLOCK_DIM, dim3* GRID_DIM, int *shared_mem){
-    // 2D BLOCK
-    dim3 bd = get_block_dimensions(m, maxnz);
+/**
+ * Compute the dimensions of the kernel w.r.t. the number of rows and k.
+ *
+ * @param m             number of rows
+ * @param maxnz         maximum number of non-zeros per row
+ * @param k             number of columns in the multi-vector
+ * @param block_dim     pointer to the block dimensions
+ * @param grid_dim      pointer to the grid dimensions
+ * @param shared_mem    pointer to the amount of shared memory
+ * */
+void compute_ell_dimensions(int m, int maxnz, int k, dim3* block_dim, dim3* grid_dim, int *shared_mem){
+    // 2D BLOCK :
+    // (#rows given to the block) X (minimum between warpSize and maxnz rounded up to a divisor of warpSize)
+    *block_dim = get_block_dimensions(m, maxnz);
 
-    // 2D GRID
-    dim3 gd = dim3(ROUND_UP(m,bd.y), k); // number of blocks needed to cover A's rows X number of columns of x
+    // 2D GRID : (#blocks needed to cover A's rows) X (#columns of x)
+    *grid_dim = dim3(ROUND_UP(m, (*block_dim).y), k); //*grid_dim = dim3(ROUND_UP(m, (*block_dim).x), k);
 
-    *shared_mem = bd.x * bd.y * sizeof(Type); // cannot reach maximum shared memory: 1024 * 8 < MAX_SHM
-    *BLOCK_DIM = bd;
-    *GRID_DIM = gd;
+    // 1D SHARED MEMORY :
+    // treated like a matrix: 1 cell per block thread
+    // cannot reach maximum shared memory thanks to limit on block size (MAX_THREADS_BLOCK * sizeof(Type) < MAX_SHM)
+    *shared_mem = (*block_dim).x * (*block_dim).y * sizeof(Type);
 }
 
+/**
+ * Allocate and transfer the structures on the device. (ELL version)
+ *
+ * @param ell           ELL structure
+ * @param d_ja          array of column indices (ELL format)
+ * @param d_as          array of nz values (ELL format)
+ * */
 void alloc_cuda_ell(ELL* ell, int **d_ja, Type **d_as){
-    int m = ell->M, maxnz = ell->MAXNZ, dim = m * maxnz;
+    int dim = ell->M * ell->MAXNZ;
     int size_ja = dim * sizeof(int), size_as = dim * sizeof(Type);
 
-    int *ja = ell->JA;
-    Type *as = ell->AS;
-
     checkCudaErrors(cudaMalloc((void**) d_ja, size_ja));
-    checkCudaErrors(cudaMalloc((void**) d_as, size_as));
+    checkCudaErrors(cudaMemcpy(*d_ja, ell->JA, size_ja, cudaMemcpyHostToDevice));
 
-    checkCudaErrors(cudaMemcpy(*d_ja, ja, size_ja, cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy(*d_as, as, size_as, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMalloc((void**) d_as, size_as));
+    checkCudaErrors(cudaMemcpy(*d_as, ell->AS, size_as, cudaMemcpyHostToDevice));
 }
