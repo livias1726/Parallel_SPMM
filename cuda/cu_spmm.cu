@@ -1,5 +1,5 @@
 #ifdef ELLPACK
-    #include "headers/cu_hll.cuh"
+    #include "headers/cu_ell.cuh"
 #else
     #include "headers/cu_csr.cuh"
 #endif
@@ -24,8 +24,7 @@ int main(int argc, char** argv) {
 
 #ifdef ELLPACK
     ELL *ell;   // used for serial product and as input to compute an HELL structure
-    HLL *hll; // used for gpu product
-    int *d_maxnz, *d_hack_offset;
+    int maxnz;
 #else
     CSR *csr;
     int num_blocks, *blocks;
@@ -94,12 +93,13 @@ int main(int argc, char** argv) {
     if (sizeof(Type) == 8) checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
 
 #ifdef ELLPACK
-    compute_hll_dimensions(ell, k, &hll, &BLOCK_DIM, &GRID_DIM, &shared_mem);
-    alloc_cuda_hll(hll, GRID_DIM.x, &d_maxnz, &d_hack_offset, &d_ja, &d_as);
+    maxnz = ell->MAXNZ;
+    compute_ell_dimensions(m, maxnz, k, &BLOCK_DIM, &GRID_DIM, &shared_mem);
+    alloc_cuda_ell(ell, &d_ja, &d_as);
 
     // product
     timer->start();
-    spmm_hll_kernel<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, d_maxnz, d_hack_offset, d_ja, d_as, d_x, k, d_y);
+    spmm_ell_kernel<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, maxnz, d_ja, d_as, d_x, k, d_y);
 #else
     blocks = (int*)malloc((m+1)*sizeof(int));
     compute_csr_dimensions(csr, k, blocks, &num_blocks, &BLOCK_DIM, &GRID_DIM, &shared_mem);
@@ -131,9 +131,7 @@ int main(int argc, char** argv) {
 
     // ------------------------------------------- Cleaning up ------------------------------------------------- //
 #ifdef ELLPACK
-    checkCudaErrors(cudaFree(d_maxnz));
-    checkCudaErrors(cudaFree(d_hack_offset));
-    delete[] hll;
+    delete[] ell;
 #else
     checkCudaErrors(cudaFree(d_irp));
     checkCudaErrors(cudaFree(d_blocks));
