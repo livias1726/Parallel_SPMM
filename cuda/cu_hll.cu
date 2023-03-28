@@ -1,10 +1,8 @@
-#include "headers/cu_ell.cuh"
+#include "headers/cu_hll.cuh"
 
 __device__ Type sub_reduce(int s, Type sum){
     for(; s > 0; s >>= 1) {
-        //if (blockIdx.x == 0 && blockIdx.y == 0) printf("1) %d. T(%d,%d) - %f\n", s, threadIdx.x, threadIdx.y, sum);
         sum += __shfl_down_sync(FULL_WARP_MASK, sum, s);
-        //if (blockIdx.x == 0 && blockIdx.y == 0) printf("2) %d. T(%d,%d) - %f\n", s, threadIdx.x, threadIdx.y, sum);
     }
     return sum;
 }
@@ -13,59 +11,25 @@ __device__ void spmm_ell(int rows, int start, /*int end,*/ int maxnz, const int 
 
     extern __shared__ Type LDS[];
 
-    /*
-     * With this configuration, threads with a tx that overflows the number of rows will be stopped.
-     * This means that EVERY warp of the last block will be truncated. To avoid this and to avoid messing with
-     * the final reduction, the x index of the thread (that gives the membership within warps) should be used to scan
-     * the row and not the column!!!
-     * */
-
-    /*
-     * WARNING:
-     *      Thread indices and block dimensions are inverted to be able to use a warp on each row.
-     *      This works only when block size is 32x32.
-     *      TODO: make it work for generic dimensions
-     * */
-    const int ty = threadIdx.x, tx = threadIdx.y; //const int tx = threadIdx.x, ty = threadIdx.y;
+    const int tx = threadIdx.x, ty = threadIdx.y;
     const int bdx = blockDim.x, bdy = blockDim.y;
     const int bx = blockIdx.x, by = blockIdx.y;
 
-    /*
-    const int i = tx + (bdx * bx);  // global row id of the thread
-    bool flag = true;
-    if (i >= rows) flag = false;    // the last block will eventually overflow the total number of rows
-                                    // it's used to perform the warp level reduction
+    const int i = ty + (bdy * bx);  // global row id of the thread
+    if (i >= rows) return;          // the last block will eventually overflow the total number of rows
 
-    const int s = start + (tx * maxnz); // starting element of the thread
+    const int s = start + (ty * maxnz); // starting element of the thread
     const int tid = tx * bdy + ty;      // accumulation cell in shared memory
-     */
 
-    const int i = tx + (bdx * bx);  // global row id of the thread
-    if (i >= rows) return;    // the last block will eventually overflow the total number of rows
-
-    const int s = start + (tx * maxnz); // starting element of the thread
-    const int tid = tx * bdy + ty;      // accumulation cell in shared memory
     /* *
      * ACCUMULATION
-     *      Each thread takes the elements at (tx, ty (* bdy)), in the hack of the block,
+     *      Each thread takes the elements at (ty, tx (* bdx)), in the hack of the block,
      *      and performs the product with the element of x in column 'by'.
      *      Partial sums gets stored in a matrix like manner: LDS[tx = rows][ty = cols].
      * */
-    /*
-    if (flag) {
-        int idx;
-        LDS[tid] = 0.0;
-        for (int j = ty; j < maxnz; j += bdy) { // do not break the loop when padding reached to avoid mining warp flow
-            idx = s + j;
-            LDS[tid] += __dmul_rn(as[idx], x[ja[idx] * k + by]);
-        }
-    }
-    __syncthreads();
-     */
-
     int idx;
     LDS[tid] = 0.0;
-    for (int j = ty; j < maxnz; j += bdy) { // do not break the loop when padding reached to avoid mining warp flow
+    for (int j = tx; j < maxnz; j += bdx) { // do not break the loop when padding is reached to avoid mining warp flow
         idx = s + j;
         LDS[tid] += __dmul_rn(as[idx], x[ja[idx] * k + by]);
     }
@@ -73,29 +37,12 @@ __device__ void spmm_ell(int rows, int start, /*int end,*/ int maxnz, const int 
 
     /* *
      * REDUCTION
-     *      Each row in LDS has to be reduced, but warps are indexed column-wise,
-     *      meaning that, if threads take their own cell into the reduction,
-     *      values will be reduced by column (sum of values on different rows and same column).
-     *
-     *      To do a correct reduction, threads need to be responsible for the reversed value: LDS[ty][tx].
+     *      Each row in LDS has to be reduced and, with this configuration, each warp manages 1 or more rows in LDS.
+     *      To do a correct reduction, the initial offset must be set at half the x block dimension.
      * */
-    /*
-    int tid_r = ty * bdy + tx;
-    LDS[tid_r] = sub_reduce(warpSize>>1, LDS[tid_r]);
+    LDS[tid] = sub_reduce(bdx>>1, LDS[tid]);
     __syncthreads();
-    if (ty == 0) y[i * k + by] = LDS[tid]; // let the first warp take care of the update
-    */
-
-    LDS[tid] = sub_reduce(warpSize>>1, LDS[tid]);
-    __syncthreads();
-    if (ty == 0) y[i * k + by] = LDS[tid]; // let the first warp take care of the update
-
-    /*
-    if (ty == 0) {
-        for (idx = 1; idx < bdy; idx++) { LDS[tid] += LDS[tid + idx]; }
-        y[i * k + by] = LDS[tid];
-    }
-     */
+    if (tx == 0) y[i * k + by] = LDS[tid]; // let the first warp take care of the update
 }
 
 __global__ void spmm_hll_kernel(int rows, const int* maxnz, const int* hack_offset,
@@ -108,24 +55,29 @@ __global__ void spmm_hll_kernel(int rows, const int* maxnz, const int* hack_offs
     spmm_ell(rows, start, /*end,*/ mnz, ja, as, x, k, y);
 }
 
+/*
+ * Blocks are dimensioned in an inverted manner w.r.t. the logical configuration (x for the rows, y for the columns).
+ * This is done to maximize warp convergence, since warps are indexed first by threadIdx.x and then threadIdx.y.
+ * This configuration needs to be taken into account for the rest of the implementation.
+ * */
 dim3 get_block_dimensions(int m, int maxnz){
     // 2D BLOCKS
     int bx, by;
 
-    // by -> find the smaller number that evenly divides WARP_SIZE that is higher than maxnz
+    // find the smaller number that evenly divides WARP_SIZE that is higher than maxnz
     for (int i = WARP_SIZE >> 1; i > 0; i >>= 1) {
         if (maxnz > i) {
-            by = i << 1;
+            bx = i << 1;
             break;
         }
     }
 
-    // bx -> each block will have at least WARP_SIZE / by rows to have BD multiple of WARP_SIZE
-    int row_w = WARP_SIZE / by;
-    bx = row_w;
+    // each block will have at least WARP_SIZE / by rows to have BD multiple of WARP_SIZE
+    int row_w = WARP_SIZE / bx;
+    by = row_w;
 
     // increase by a factor of 'row_w' to increase the number of warps in the block
-    while (bx < m && bx * by < MAX_THREADS_BLOCK) bx += row_w;
+    while (by < m && bx * by < MAX_THREADS_BLOCK) by += row_w;
 
     return dim3(bx,by);
 }
@@ -232,13 +184,13 @@ void compute_hll_dimensions(ELL* ell, int k, HLL **hll, dim3* BLOCK_DIM, dim3* G
 
     int m = ell->M, maxnz = ell->MAXNZ;
     // 2D BLOCK :
-    // (#rows given to the block) X (minimum between warpSize and maxnz rounded up to a divisor of warpSize)
+    // (minimum between warpSize and maxnz rounded up to a divisor of warpSize) X (#rows given to the block)
     dim3 bd = get_block_dimensions(m, maxnz);
     // 2D GRID : (#blocks needed to cover A's rows) X (#columns of x)
-    dim3 gd = dim3(ROUND_UP(m,bd.x), k);
+    dim3 gd = dim3(ROUND_UP(m,bd.y), k);
 
     // build the HLL structure
-    get_hll(ell, hll, bd.x, gd.x);
+    get_hll(ell, hll, bd.y, gd.x);
 
     // 1D SHARED MEM treated like a matrix: 1 cell per block thread
     // cannot reach maximum shared memory thanks to limit on block size (MAX_THREADS_BLOCK * sizeof(Type) < MAX_SHM)

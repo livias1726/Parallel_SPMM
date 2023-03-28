@@ -2,9 +2,7 @@
 
 __device__ Type sub_reduce(int s, Type sum){
     for(; s > 0; s >>= 1) {
-        //if (blockIdx.x == 0 && blockIdx.y == 0) printf("1) %d. T(%d,%d) - %f\n", s, threadIdx.x, threadIdx.y, sum);
         sum += __shfl_down_sync(FULL_WARP_MASK, sum, s);
-        //if (blockIdx.x == 0 && blockIdx.y == 0) printf("2) %d. T(%d,%d) - %f\n", s, threadIdx.x, threadIdx.y, sum);
     }
     return sum;
 }
@@ -17,7 +15,6 @@ __device__ Type sub_reduce(int s, Type sum){
 * */
 __global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const Type *as, const Type *x, int k, Type* y) {
 
-    //TODO: warp is considered column-wise --> threads with increasing tx and same ty are a part of the same warp
     extern __shared__ Type LDS[];
 
     int tx = threadIdx.x, ty = threadIdx.y;
@@ -30,9 +27,6 @@ __global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const Type *
     int r_a = i * maxnz;        // ELL's row associated with the thread
     int tid_a = tx * bdy + ty;  // accumulation cell
     int tid_r = ty * bdx + tx;  // reduction cell
-
-    //int wid = tid / warpSize;
-    //int warps = (bdx * bdy) / warpSize;
 
     int idx, j;
 
@@ -47,17 +41,6 @@ __global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const Type *
         LDS[tid_a] += __dmul_rn(as[idx], x[ja[idx] * k + by]);
     }
     __syncthreads();
-
-    // TODO: try to configure a warp reduction
-    // REDUCTION
-    // int row_w = warpSize / bdy;
-    // since 'bdy' is always a power of 2 <= 32, a warp-level reduction can be executed on the rows
-    /*
-    LDS[tid_r] = sub_reduce(warpSize>>1, LDS[tid_r]);
-    __syncthreads();
-
-    if (ty == 0) y[i * k + by] = LDS[tid_a];
-     */
 
     /*
      * The first thread of each row reduces the partial sums
@@ -102,8 +85,6 @@ void compute_ell_dimensions(int m, int maxnz, int k, dim3* BLOCK_DIM, dim3* GRID
     *shared_mem = bd.x * bd.y * sizeof(Type); // cannot reach maximum shared memory: 1024 * 8 < MAX_SHM
     *BLOCK_DIM = bd;
     *GRID_DIM = gd;
-
-    printf("BLOCK [%d][%d] - GRID [%d][%d] - SHM = %d\n", bd.x, bd.y, gd.x, k, *shared_mem);
 }
 
 void alloc_cuda_ell(ELL* ell, int **d_ja, Type **d_as){

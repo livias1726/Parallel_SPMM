@@ -32,5 +32,3 @@ void alloc_cuda_spmm(Type **d_x, Type **d_y, const Type *x, int m, int n, int k)
     checkCudaErrors(cudaMalloc((void**) d_y, (m*size_partial)));
 }
 
-
-
