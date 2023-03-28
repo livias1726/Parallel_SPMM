@@ -21,9 +21,9 @@ void process_arguments(int argc, char** argv, FILE **f, int* k){
     *k = (int)strtol(argv[2], NULL, 10);
 }
 
-void alloc_cuda_spmm(Type **d_x, Type **d_y, const Type *x, int m, int n, int k){
+void alloc_cuda_spmm(double **d_x, double **d_y, const double *x, int m, int n, int k){
 
-    int size_partial = k * sizeof(Type);
+    int size_partial = k * sizeof(double);
     int size_x = n * size_partial;
 
     checkCudaErrors(cudaMalloc((void**) d_x, size_x));

@@ -8,12 +8,12 @@
  * @param k number of columns of x
  * @param y receives product results Mxk stored as 1D array
  * */
-void serial_product_csr(CSR* mat, const Type* x, int k, Type* y){
+void serial_product_csr(CSR* mat, const double* x, int k, double* y){
     int m = mat->M, *irp = mat->IRP, *ja = mat->JA;
-    Type *as = mat->AS;
+    double *as = mat->AS;
 
     int ry, rx, j, z;
-    Type val;
+    double val;
 
     for (int i = 0; i < m; i++) {
         ry = i*k;
@@ -37,12 +37,12 @@ void serial_product_csr(CSR* mat, const Type* x, int k, Type* y){
  * @param k number of columns of x
  * @param y receives product results Mxk stored as 1D array
  * */
-void serial_product_ell(ELL* mat, const Type* x, int k, Type* y){
+void serial_product_ell(ELL* mat, const double* x, int k, double* y){
     int maxnz = mat->MAXNZ, m = mat->M, *ja = mat->JA;
-    Type *as = mat->AS;
+    double *as = mat->AS;
 
     int ra, rx, ry, j, z, idx;
-    Type val;
+    double val;
     for (int i = 0; i < m; i++) {
         ra = i*maxnz;
         ry = i*k;

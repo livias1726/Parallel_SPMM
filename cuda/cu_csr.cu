@@ -14,7 +14,7 @@
  * @param k sub-warp dimension
  * @param sum value to be reduced
  * */
-__device__ Type sub_reduce(unsigned mask, int s, int k, Type sum){
+__device__ double sub_reduce(unsigned mask, int s, int k, double sum){
     for(; s >= k; s >>= 1) {
         sum += __shfl_down_sync(mask, sum, s);
     }
@@ -25,9 +25,11 @@ __device__ Type sub_reduce(unsigned mask, int s, int k, Type sum){
  * With this configuration there's no need for a reduction phase since each thread does not share the column of x
  * assigned to it. For this reason, each thread's computation is independent, meaning there's no need for explicit
  * synchronization nor usage of shared memory.
+ *
+ * NOTE: using __dmul_rn to perform the accumulation guarantees 0.0 errors, but halves the performances!
  * */
-__device__ void spmm_csr_vector_large(const int *irp, const int *ja, const Type *as, int start, int end,
-                                      int k, const Type* x, Type* y){
+__device__ void spmm_csr_vector_large(const int *irp, const int *ja, const double *as, int start, int end,
+                                      int k, const double* x, double* y){
 
     int kpt = ROUND_UP(k,warpSize);     // number of columns per thread
     int tid_b = threadIdx.x;            // thread id in the block
@@ -37,7 +39,7 @@ __device__ void spmm_csr_vector_large(const int *irp, const int *ja, const Type 
 
     int tid_k; // thread's k
     int j, z, r_y;
-    Type tmp;
+    double tmp, val_a, val_x;
 
     for (int i = start + wid; i < end; i += warps) { // warp takes the row
         r_y = i * k;
@@ -46,10 +48,12 @@ __device__ void spmm_csr_vector_large(const int *irp, const int *ja, const Type 
             tid_k = (z * warpSize) + tid_w;   // column of x each thread will read
 
             if (tid_k < k) {
-                tmp = 0.0f;
+                tmp = 0;
                 for (j = irp[i]; j < irp[i+1]; j++) {
+                    val_a = as[j];
+                    val_x = x[ja[j] * k + tid_k];
                     // whole warp takes the same non-zero and each thread takes the specific value of x
-                    tmp += as[j] * x[ja[j] * k + tid_k];
+                    tmp += val_a * val_x;
                 }
                 y[r_y + tid_k] = tmp;
             }
@@ -67,11 +71,13 @@ __device__ void spmm_csr_vector_large(const int *irp, const int *ja, const Type 
  * warpSize/k.
  *
  * This implementation needs a shared memory of size BD.
+ *
+ * NOTE: using __dmul_rn to perform the accumulation does not reduce the error and decreases the performance!
  * */
-__device__ void spmm_csr_vector_small(const int *irp, const int *ja, const Type *as, int start, int end,
-                                      int k, const Type* x, Type* y){
+__device__ void spmm_csr_vector_small(const int *irp, const int *ja, const double *as, int start, int end,
+                                      int k, const double* x, double* y){
 
-    extern __shared__ Type LDS[];           // each thread has a cell in the shared memory
+    extern __shared__ double LDS[];           // each thread has a cell in the shared memory
 
     int tid_b = threadIdx.x;                // thread id in the block
     int tid_w = tid_b % warpSize;           // thread id in the warp
@@ -92,6 +98,7 @@ __device__ void spmm_csr_vector_small(const int *irp, const int *ja, const Type 
     int excluded = sub_warps - first_pot;
 
     int j, r_y;
+    double val_a, val_x;
     for (int i = start + wid; i < end; i += warps) { // warp takes the row
         r_y = i * k;
 
@@ -99,8 +106,10 @@ __device__ void spmm_csr_vector_small(const int *irp, const int *ja, const Type 
         LDS[tid_b] = 0.0;
         if (swid != sub_warps) { // excludes the truncated sub-warp
             for (j = irp[i] + swid; j < irp[i+1]; j += sub_warps) { // sub warp takes the non-zero
+                val_a = as[j];
+                val_x = x[ja[j] * k + tid_sw];
                 // thread in sub warp takes the specific value of x
-                LDS[tid_b] += as[j] * x[ja[j] * k + tid_sw];
+                LDS[tid_b] += val_a * val_x;
             }
         }
 
@@ -121,8 +130,8 @@ __device__ void spmm_csr_vector_small(const int *irp, const int *ja, const Type 
 /**
  * VECTOR KERNEL: 1 warp per matrix row.
  * */
-__global__ void spmm_csr_vector_kernel(const int *irp, const int *ja, const Type *as, int k, const Type* x,
-                                         int* blocks, Type* y) {
+__global__ void spmm_csr_vector_kernel(const int *irp, const int *ja, const double *as, int k, const double* x,
+                                         int* blocks, double* y) {
 
     int start = blocks[blockIdx.x];
     int end = blocks[blockIdx.x + 1];
@@ -175,7 +184,7 @@ void compute_csr_dimensions(CSR* csr, int k, int* blocks, int *num_blocks, dim3*
     if (bd > MAX_THREADS_BLOCK) bd = MAX_THREADS_BLOCK; // check maximum threads per block limit
 
     // no need to check memory limit for the limit on BD will limit the memory to 1024 * 8
-    unsigned int shm = (k < WARP_SIZE) ? bd * sizeof(Type) : 0;
+    unsigned int shm = (k < WARP_SIZE) ? bd * sizeof(double) : 0;
 
     // 1D grid dimension: compute row balancing on blocks and number of blocks needed
     int nb = get_rows_per_block(bd, m, irp, blocks);
@@ -187,14 +196,14 @@ void compute_csr_dimensions(CSR* csr, int k, int* blocks, int *num_blocks, dim3*
     *GRID_DIM = dim3(nb-1);
 }
 
-void alloc_cuda_csr(CSR* csr, int* blocks, int num_blocks, int **d_irp, int **d_ja, Type **d_as, int **d_blocks){
+void alloc_cuda_csr(CSR* csr, int* blocks, int num_blocks, int **d_irp, int **d_ja, double **d_as, int **d_blocks){
     int m = csr->M, nz = csr->NZ;
     int *irp = csr->IRP, *ja = csr->JA;
-    Type *as = csr->AS;
+    double *as = csr->AS;
 
     int size_irp = (m+1)*sizeof(int);
     int size_ja = nz*sizeof(int);
-    int size_as = nz*sizeof(Type);
+    int size_as = nz*sizeof(double);
     int size_blocks = num_blocks*sizeof(int);
 
     checkCudaErrors(cudaMalloc((void**) d_irp, size_irp));

@@ -1,6 +1,6 @@
 #include "headers/utils.h"
 
-void read_multivector(Type* vec, int rows, int cols) {
+void read_multivector(double* vec, int rows, int cols) {
     int i,j;
     double fl = 0;
 
@@ -14,7 +14,7 @@ void read_multivector(Type* vec, int rows, int cols) {
     fclose(f);
 }
 
-void save_result(Type* y, int rows, int cols) {
+void save_result(double* y, int rows, int cols) {
     int i, j;
 
     FILE *f = fopen("result.txt", "w");
@@ -27,7 +27,7 @@ void save_result(Type* y, int rows, int cols) {
     fclose(f);
 }
 
-void print_matrix(Type* mat, int rows, int cols, char* msg){
+void print_matrix(double* mat, int rows, int cols, char* msg){
     fprintf(stdout, "%s", msg);
     for (int i=0; i < rows; i++) {
         for (int j=0; j < cols; j++) {
@@ -39,7 +39,7 @@ void print_matrix(Type* mat, int rows, int cols, char* msg){
 
 void print_csr(CSR* csr){
     int m = csr->M, n = csr->N, nz = csr->NZ, *ja = csr->JA, *irp = csr->IRP;
-    Type *as = csr->AS;
+    double *as = csr->AS;
 
     fprintf(stdout, "CSR:\n");
     fprintf(stdout, "\tM: %d, N: %d, NZ: %d\n", m, n, nz);
@@ -61,7 +61,7 @@ void print_csr(CSR* csr){
 
 void print_ell(ELL* ell) {
     int m = ell->M, n = ell->N, maxnz = ell->MAXNZ, *ja = ell->JA;
-    Type *as = ell->AS;
+    double *as = ell->AS;
 
     fprintf(stdout, "ELL:\n");
     fprintf(stdout, "\tM: %d, N: %d, MAXNZ: %d\n", m, n, maxnz);

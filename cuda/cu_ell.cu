@@ -1,6 +1,6 @@
 #include "headers/cu_ell.cuh"
 
-__device__ Type sub_reduce(int s, Type sum){
+__device__ double sub_reduce(int s, double sum){
     for(; s > 0; s >>= 1) {
         sum += __shfl_down_sync(FULL_WARP_MASK, sum, s);
     }
@@ -16,9 +16,9 @@ __device__ Type sub_reduce(int s, Type sum){
 /*
  * NOTE: see 'get_block_dimensions' description.
  */
-__global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const Type *as, const Type *x, int k, Type* y) {
+__global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const double *as, const double *x, int k, double* y) {
 
-    extern __shared__ Type LDS[];
+    extern __shared__ double LDS[];
 
     int tx = threadIdx.x, ty = threadIdx.y;
     int bx = blockIdx.x, by = blockIdx.y;
@@ -39,8 +39,7 @@ __global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const Type *
     LDS[tid] = 0.0;
     for (int j = tx; j < maxnz; j += bdx/*int j = ty; j < maxnz; j += bdy*/) { // do not break the loop when padding reached to avoid mining warp flow
         idx = r_a + j;
-        //LDS[tid] += __dmul_rn(as[idx], x[ja[idx] * k + by]);
-        LDS[tid] += __fmul_rn(as[idx], x[ja[idx] * k + by]);
+        LDS[tid] += as[idx] * x[ja[idx] * k + by];
     }
     //__syncthreads();
     __syncwarp();
@@ -112,8 +111,8 @@ void compute_ell_dimensions(int m, int maxnz, int k, dim3* block_dim, dim3* grid
 
     // 1D SHARED MEMORY :
     // treated like a matrix: 1 cell per block thread
-    // cannot reach maximum shared memory thanks to limit on block size (MAX_THREADS_BLOCK * sizeof(Type) < MAX_SHM)
-    *shared_mem = (*block_dim).x * (*block_dim).y * sizeof(Type);
+    // cannot reach maximum shared memory thanks to limit on block size (MAX_THREADS_BLOCK * sizeof(double) < MAX_SHM)
+    *shared_mem = (*block_dim).x * (*block_dim).y * sizeof(double);
 }
 
 /**
@@ -123,9 +122,9 @@ void compute_ell_dimensions(int m, int maxnz, int k, dim3* block_dim, dim3* grid
  * @param d_ja          array of column indices (ELL format)
  * @param d_as          array of nz values (ELL format)
  * */
-void alloc_cuda_ell(ELL* ell, int **d_ja, Type **d_as){
+void alloc_cuda_ell(ELL* ell, int **d_ja, double **d_as){
     int dim = ell->M * ell->MAXNZ;
-    int size_ja = dim * sizeof(int), size_as = dim * sizeof(Type);
+    int size_ja = dim * sizeof(int), size_as = dim * sizeof(double);
 
     checkCudaErrors(cudaMalloc((void**) d_ja, size_ja));
     checkCudaErrors(cudaMemcpy(*d_ja, ell->JA, size_ja, cudaMemcpyHostToDevice));

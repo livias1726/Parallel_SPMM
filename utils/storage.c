@@ -48,12 +48,7 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){
             fscanf(f, "%d %d\n", &r, &c);
             elem->val = 1.0;
         } else {
-            if (SP) {
-                fscanf(f, "%d %d %f\n", &r, &c, &(elem->val));  // read single precision
-            } else {
-                fscanf(f, "%d %d %lf\n", &r, &c, &(elem->val)); // read double precision
-            }
-
+            fscanf(f, "%d %d %lf\n", &r, &c, &(elem->val));
             // some matrices still have zero values in their representation: this condition excludes them
             if (elem->val == 0) {
                 free(elem);
@@ -160,7 +155,7 @@ CSR* alloc_csr(int m, int n, int nz){
 
     mat->IRP = (int*)malloc((m+1)*sizeof(int));
     mat->JA = (int*)malloc(nz*sizeof(int));
-    mat->AS = (Type*)malloc(nz*sizeof(Type));
+    mat->AS = (double*)malloc(nz*sizeof(double));
     malloc_handler(3, (void* []) {mat->IRP, mat->JA, mat->AS});
 
     // populate CSR format
@@ -186,7 +181,7 @@ ELL* alloc_ell(Elem** elems, int m, int n, int nz, int* maxnz){
     // calloc is used to avoid the addition of padding in a loop
     // 2D arrays are treated as 1D arrays
     mat->JA = calloc(m*(*maxnz), sizeof(int));
-    mat->AS = (Type*)calloc(m*(*maxnz), sizeof(Type));
+    mat->AS = (double*)calloc(m*(*maxnz), sizeof(double));
     malloc_handler(2, (void* []) {mat->JA, mat->AS});
 
     // populate ELLPACK format

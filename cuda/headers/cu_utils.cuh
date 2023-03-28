@@ -27,4 +27,4 @@ extern "C"{
 
 //--------------------------------------------- Signatures ---------------------------------------------------------//
 void process_arguments(int argc, char **argv, FILE **f, int *k);
-void alloc_cuda_spmm(Type **d_x, Type **d_y, const Type *x, int m, int n, int k);
+void alloc_cuda_spmm(double **d_x, double **d_y, const double *x, int m, int n, int k);

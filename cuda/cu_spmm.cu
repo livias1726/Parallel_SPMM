@@ -11,11 +11,11 @@ int main(int argc, char** argv) {
     int k, m, n, nz;
 
     double flop, gflops_s, gflops_p;
-    Type abs_err, rel_err;
+    double abs_err, rel_err;
 
-    Type *x, *d_x, *y_s, *y_p, *d_y;
+    double *x, *d_x, *y_s, *y_p, *d_y;
 
-    Type *d_as;
+    double *d_as;
     int *d_ja;
 
     StopWatchInterface* timer = 0;
@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
     // --------------------------------------------- GPU SpMM -------------------------------------------------- //
 
     // to avoid bank conflicts when double values are used
-    if (!SP) checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
+    checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
 
 #ifdef ELLPACK
     maxnz = ell->MAXNZ;
@@ -113,7 +113,7 @@ int main(int argc, char** argv) {
     timer->stop();
 
     gflops_p = (double)flop/((timer->getTime())*1.e6);
-    checkCudaErrors(cudaMemcpy(y_p, d_y, m * k * sizeof(Type), cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(y_p, d_y, m * k * sizeof(double), cudaMemcpyDeviceToHost));
 
     // check results
     // --> double: relative error should be as close as possible to 2.22e−16 (IEEE double precision unit roundoff)
