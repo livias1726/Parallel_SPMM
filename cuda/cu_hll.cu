@@ -7,7 +7,7 @@ __device__ Type sub_reduce(int s, Type sum){
     return sum;
 }
 
-__device__ void spmm_ell(int rows, int start, /*int end,*/ int maxnz, const int *ja, const Type *as, const Type *x, int k, Type* y){
+__device__ void spmm_ell(int rows, int start, int maxnz, const int *ja, const Type *as, const Type *x, int k, Type* y){
 
     extern __shared__ Type LDS[];
 
@@ -50,9 +50,8 @@ __global__ void spmm_hll_kernel(int rows, const int* maxnz, const int* hack_offs
 
     int mnz = maxnz[blockIdx.x];
     int start = hack_offset[blockIdx.x];
-    //int end = hack_offset[bid + 1];
 
-    spmm_ell(rows, start, /*end,*/ mnz, ja, as, x, k, y);
+    spmm_ell(rows, start, mnz, ja, as, x, k, y);
 }
 
 /*
@@ -155,7 +154,6 @@ void get_hll(ELL* ell, HLL **hll, int bdx, int num_blocks){
 
         hack_offset[nb+1] = hack_offset[nb] + (bdx * mnz);  // populate hack offsets
     }
-    hack_offset[num_blocks] = dim;
 
     // deallocate ELL
     free(ell->JA);

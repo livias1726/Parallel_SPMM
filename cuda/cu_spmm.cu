@@ -1,5 +1,5 @@
 #ifdef ELLPACK
-    #include "headers/cu_ell.cuh"
+    #include "headers/cu_hll.cuh"
 #else
     #include "headers/cu_csr.cuh"
 #endif
@@ -94,13 +94,11 @@ int main(int argc, char** argv) {
     if (sizeof(Type) == 8) checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
 
 #ifdef ELLPACK
-    // compute_ell_dimensions(m, maxnz, k, &BLOCK_DIM, &GRID_DIM, &shared_mem);
     compute_hll_dimensions(ell, k, &hll, &BLOCK_DIM, &GRID_DIM, &shared_mem);
     alloc_cuda_hll(hll, GRID_DIM.x, &d_maxnz, &d_hack_offset, &d_ja, &d_as);
 
     // product
     timer->start();
-    //spmm_ell_kernel<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, maxnz, d_ja, d_as, d_x, k, d_y);
     spmm_hll_kernel<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, d_maxnz, d_hack_offset, d_ja, d_as, d_x, k, d_y);
 #else
     blocks = (int*)malloc((m+1)*sizeof(int));
@@ -111,7 +109,6 @@ int main(int argc, char** argv) {
     timer->start();
     spmm_csr_vector_kernel<<<GRID_DIM, BLOCK_DIM, shared_mem>>>(d_irp, d_ja, d_as, k, d_x, d_blocks, d_y);
 #endif
-    //checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
     timer->stop();
 
@@ -127,9 +124,6 @@ int main(int argc, char** argv) {
     save_result(y_p, m, k);
 #endif
 
-    //print_matrix(y_s, m, k, "\nSerial Result:\n");
-    //print_matrix(y_p, m, k, "\nParallel Result:\n");
-
 #ifdef DEBUG
     print_matrix(y_s, m, k, "\nSerial Result:\n");
     print_matrix(y_p, m, k, "\nParallel Result:\n");
@@ -138,6 +132,8 @@ int main(int argc, char** argv) {
     // ------------------------------------------- Cleaning up ------------------------------------------------- //
 #ifdef ELLPACK
     checkCudaErrors(cudaFree(d_maxnz));
+    checkCudaErrors(cudaFree(d_hack_offset));
+    delete[] hll;
 #else
     checkCudaErrors(cudaFree(d_irp));
     checkCudaErrors(cudaFree(d_blocks));
