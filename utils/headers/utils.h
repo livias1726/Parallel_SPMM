@@ -99,6 +99,7 @@ void malloc_handler(int, void**);
 void clean_up(int, void**);
 void populate_multivector(double*, int, int);
 void get_errors(int, double*, double*, double*, double*);
+void tokenize_output (char* output, double* gs, double* gp, double* ae, double* re);
 
 
 

@@ -107,10 +107,12 @@ int main(int argc, char** argv) {
     clean_up(3, (void*[]){x, y_s, y_p});
 
 #ifdef PERFORMANCE
-    fprintf(stdout, "%f %f %f %f", gflops_s, gflops_p, abs_err, rel_err);
+    fprintf(stdout, "%f %f %lf %lf", gflops_s, gflops_p, abs_err, rel_err);
 #else
-    fprintf(stdout, "Serial GFLOPS: %f\nParallel GFLOPS: %f\nAbsolute error: %.2e\nRelative error: %.2e\n",
-            gflops_s, gflops_p, abs_err, rel_err);
+    fprintf(stdout, "Serial GFLOPS: %f\n"
+                    "Parallel GFLOPS: %f\n"
+                    "Absolute error: %.2e\n"
+                    "Relative error: %.2e\n", gflops_s, gflops_p, abs_err, rel_err);
 #endif
 
     return 0;

@@ -14,7 +14,7 @@ __device__ double sub_reduce(int s, double sum){
 * To completely cover A's rows, blocks will eventually need to iterate horizontally on AS and JA and accumulate products.
 * */
 /*
- * NOTE: see 'get_block_dimensions' description.
+ * NOTE: see 'get_block_dimensions'.
  */
 __global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const double *as, const double *x, int k, double* y) {
 

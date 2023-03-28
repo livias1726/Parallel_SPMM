@@ -124,9 +124,6 @@ int main(int argc, char** argv) {
     save_result(y_p, m, k);
 #endif
 
-    //print_matrix(y_s, 10, k, "\nSerial Result:\n");
-    //print_matrix(y_p, 10, k, "\nParallel Result:\n");
-
 #ifdef DEBUG
     print_matrix(y_s, m, k, "\nSerial Result:\n");
     print_matrix(y_p, m, k, "\nParallel Result:\n");
@@ -155,7 +152,7 @@ int main(int argc, char** argv) {
     cudaDeviceReset();
 
 #ifdef PERFORMANCE
-    fprintf(stdout, "%f %f %f %f", gflops_s, gflops_p, abs_err, rel_err);
+    fprintf(stdout, "%f %f %lf %lf", gflops_s, gflops_p, abs_err, rel_err);
 #else
     fprintf(stdout, "Serial GFLOPS: %f\n"
                     "Parallel GFLOPS: %f\n"
