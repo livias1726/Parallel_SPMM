@@ -73,7 +73,7 @@ __global__ void spmm_ell_kernel(int rows, int maxnz, const int *ja, const double
  * */
 dim3 get_block_dimensions(int m, int maxnz){
     // 2D BLOCKS
-    int i, max_bx, by = 0, bx;
+    int i, max_by, by = 0, bx;
 
     // find the smaller number that evenly divides WARP_SIZE and that is higher than maxnz
     for (i = WARP_SIZE >> 1; i > 0; i >>= 1) {
@@ -84,7 +84,7 @@ dim3 get_block_dimensions(int m, int maxnz){
     }
 
     // increase by a factor of 'warpSize/blockDim.x' to increase the number of warps in the block
-    i = WARP_SIZE / by;
+    i = WARP_SIZE / bx;
     max_by = MAX_THREADS_BLOCK / bx;
     while (by < m && by < max_by) { by += i; }
 
