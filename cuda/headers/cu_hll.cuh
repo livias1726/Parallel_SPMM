@@ -15,7 +15,7 @@
  * An additional MAXNZ array is used to keep track of the elements each row in the sub-matrix has.
  * */
 typedef struct hll {
-    int* HACK_OFFSET;   //
+    int* HACK_OFFSET;
     int* MAXNZ;         // array of maxnz per block
     int* JA;            // new JA without excessive padding
     Type* AS;           // new AS without excessive padding
@@ -25,5 +25,4 @@ __global__ void spmm_hll_kernel(int rows, const int* maxnz, const int* hack_offs
                                 const int *ja, const Type *as, const Type *x, int k, Type* y);
 void compute_hll_dimensions(ELL*, int, HLL**, dim3*, dim3*, int*);
 void alloc_cuda_hll(HLL*, int, int**, int**, int**, Type**);
-
-void print_hell(HLL*);
+void print_hll(HLL*, int);

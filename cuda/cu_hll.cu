@@ -7,18 +7,27 @@ __device__ Type sub_reduce(int s, Type sum){
     return sum;
 }
 
+/**
+* Ellpack SpMM kernel
+*
+*   Each block is given a subset of rows from AS and JA (blockDim.y) and a column of x (blockIdx.y).
+*   To completely cover A's columns, blocks will eventually need to iterate on AS and JA and accumulate products.
+* */
+/*
+ * NOTE: see 'get_block_dimensions'.
+ */
 __device__ void spmm_ell(int rows, int start, int maxnz, const int *ja, const Type *as, const Type *x, int k, Type* y){
 
     extern __shared__ Type LDS[];
 
     const int tx = threadIdx.x, ty = threadIdx.y;
     const int bdx = blockDim.x, bdy = blockDim.y;
-    const int bx = blockIdx.x, by = blockIdx.y; // const int bx = blockIdx.y, by = blockIdx.x; //
+    const int bx = blockIdx.x, by = blockIdx.y;
 
     const int i = ty + (bdy * bx);  // global row id of the thread
     if (i >= rows) return;          // the last block will eventually overflow the total number of rows
 
-    const int s = start + (ty * maxnz); // starting element of the thread
+    const int row = start + (ty * maxnz); // starting row of the thread
     const int tid = tx * bdy + ty;      // accumulation cell in shared memory
 
     /* *
@@ -30,7 +39,7 @@ __device__ void spmm_ell(int rows, int start, int maxnz, const int *ja, const Ty
     int idx;
     LDS[tid] = 0.0;
     for (int j = tx; j < maxnz; j += bdx) { // do not break the loop when padding is reached to avoid mining warp flow
-        idx = s + j;
+        idx = row + j;
         LDS[tid] += as[idx] * x[ja[idx] * k + by];
     }
     __syncwarp();
@@ -44,6 +53,13 @@ __device__ void spmm_ell(int rows, int start, int maxnz, const int *ja, const Ty
     if (tx == 0) y[i * k + by] = LDS[tid]; // let the first warp take care of the update
 }
 
+/**
+ * Hacked-Ellpack SpMM kernel
+ *
+ *   Each block calls the Ellpack kernel with its own number of maxnz, to discriminate rows in AS and JA,
+ *   and the starting point of its own ELL structure inside AS and JA. Blocks are not given the ending point of their
+ *   own structures because each block manages exactly blockDim.y rows (eventually with the exception of the last one).
+ * */
 __global__ void spmm_hll_kernel(int rows, const int* maxnz, const int* hack_offset,
                                 const int *ja, const Type *as, const Type *x, int k, Type* y) {
 
@@ -53,10 +69,22 @@ __global__ void spmm_hll_kernel(int rows, const int* maxnz, const int* hack_offs
     spmm_ell(rows, start, mnz, ja, as, x, k, y);
 }
 
-/*
- * Blocks are dimensioned in an inverted manner w.r.t. the logical configuration (x for the rows, y for the columns).
- * This is done to maximize warp convergence, since warps are indexed first by threadIdx.x and then threadIdx.y.
- * This configuration needs to be taken into account for the rest of the implementation.
+/* *
+ * Blocks are dimensioned to cover the Ellpack matrix in an inverted manner (y for the rows, x for the columns)
+ * to maximize coalesced accesses.
+ * X.
+ *      The x dimension is set to be the smaller divisor of warp size that reaches MAXNZ
+ *      and set to warp size if MAXNZ is higher than that.
+ * Y.
+ *      The y dimension is set to be a factor of warpSize/blockDim.x,
+ *      so that each block will have at least warpSize/blockDim.x rows
+ *      to have a block dimension multiple of warpSize.
+ *      This factor will be increased to reach the total number of rows or the maximum dimension of the block.
+ *
+ * NOTE: the logical configuration (x for the rows, y for the columns) causes uncoalesced accesses within the warp,
+ *       since warps are indexed by threadIdx.x first. In that case, each thread in the warp will be responsible
+ *       for a different row, accessing the Ellpack matrix by column. Meanwhile, with the inverted configuration,
+ *       each earp will be responsible for a set of subsequent rows.
  * */
 dim3 get_block_dimensions(int m, int maxnz){
     // 2D BLOCKS
@@ -153,6 +181,7 @@ void get_hll(ELL* ell, HLL **hll, int bdx, int num_blocks){
 
         hack_offset[nb+1] = hack_offset[nb] + (bdx * mnz);  // populate hack offsets
     }
+    hack_offset[num_blocks] = dim;
 
     // deallocate ELL
     free(ell->JA);
@@ -167,7 +196,7 @@ void get_hll(ELL* ell, HLL **hll, int bdx, int num_blocks){
 }
 
 /**
- * Compute the dimensions of the kernel w.r.t. the number of rows and k and builds the HLL structure starting from
+ * Computes the dimensions of the kernel w.r.t. the number of rows and k and builds the HLL structure starting from
  * these dimensions and the original ELL structure.
  *
  * @param ell           original ELL structure
@@ -180,14 +209,15 @@ void get_hll(ELL* ell, HLL **hll, int bdx, int num_blocks){
 void compute_hll_dimensions(ELL* ell, int k, HLL **hll, dim3* BLOCK_DIM, dim3* GRID_DIM, int *shared_mem){
 
     int m = ell->M, maxnz = ell->MAXNZ;
+
     // 2D BLOCK :
     // (minimum between warpSize and maxnz rounded up to a divisor of warpSize) X (#rows given to the block)
     dim3 bd = get_block_dimensions(m, maxnz);
     // 2D GRID : (#blocks needed to cover A's rows) X (#columns of x)
-    dim3 gd = dim3(ROUND_UP(m,bd.y), k); //dim3 gd = dim3(k, ROUND_UP(m,bd.y));
+    dim3 gd = dim3(ROUND_UP(m,bd.y), k);
 
     // build the HLL structure
-    get_hll(ell, hll, bd.y, gd.x); //get_hll(ell, hll, bd.y, gd.y);
+    get_hll(ell, hll, bd.y, gd.x);
 
     // 1D SHARED MEM treated like a matrix: 1 cell per block thread
     // cannot reach maximum shared memory thanks to limit on block size (MAX_THREADS_BLOCK * sizeof(Type) < MAX_SHM)
@@ -231,6 +261,19 @@ void alloc_cuda_hll(HLL* hll, int num_blocks, int **d_maxnz, int **d_hack, int *
     checkCudaErrors(cudaMemcpy(*d_as, as, size_as, cudaMemcpyHostToDevice));
 }
 
-void print_hll(HLL* hll){
-    /*TODO*/
+void print_hll(HLL* hll, int num_blocks){
+    int *ho = hll->HACK_OFFSET, *mnz = hll->MAXNZ, *ja = hll->JA;
+    Type *as = hll->AS;
+
+    int i, j, z;
+    for (i = 0; i < num_blocks; i++) {
+        fprintf(stdout, "Hack %d:\n", i+1);
+        for (j = ho[i]; j < ho[i+1]; j+=mnz[i]) {
+            for (z = 0; z < mnz[i]; z++) {
+                fprintf(stdout, "%.16g (%d) ", as[j+z], ja[j+z]);
+            }
+            fprintf(stdout, "\n");
+        }
+        fprintf(stdout, "\n");
+    }
 }

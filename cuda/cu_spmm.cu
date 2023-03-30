@@ -95,6 +95,9 @@ int main(int argc, char** argv) {
 
 #ifdef ELLPACK
     compute_hll_dimensions(ell, k, &hll, &BLOCK_DIM, &GRID_DIM, &shared_mem);
+#ifdef DEBUG
+    print_hll(hll, GRID_DIM.x);
+#endif
     alloc_cuda_hll(hll, GRID_DIM.x, &d_maxnz, &d_hack_offset, &d_ja, &d_as);
 
     // product

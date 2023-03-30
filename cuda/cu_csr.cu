@@ -124,6 +124,8 @@ __device__ void spmm_csr_vector_small(const int *irp, const int *ja, const Type 
 
 /**
  * VECTOR KERNEL: 1 warp per matrix row.
+ *      If k is higher than half the warp size, the spmm with sub-warps (spmm_csr_vector_small)
+ *      behaves just like the other (spmm_csr_vector_large) but with more useless overhead.
  * */
 __global__ void spmm_csr_vector_kernel(const int *irp, const int *ja, const Type *as, int k, const Type* x,
                                          int* blocks, Type* y) {
@@ -143,6 +145,11 @@ __global__ void spmm_csr_vector_kernel(const int *irp, const int *ja, const Type
  *
  * Inspired by Algorithm 2 of Greathouse, Daga - "Efficient Sparse Matrix-Vector Multiplication
  * on GPUs using the CSR Storage Format"
+ *
+ * @param bd                block dimension
+ * @param rows              total number of rows
+ * @param irp               IRP array of the CSR format
+ * @param rows_per_block    output array with the starting row per block
  * */
 int get_rows_per_block(int bd, int rows, int* irp, int* rows_per_block){
 
@@ -169,19 +176,30 @@ int get_rows_per_block(int bd, int rows, int* irp, int* rows_per_block){
     return ctr;
 }
 
-void compute_csr_dimensions(CSR* csr, int k, int* blocks, int *num_blocks, dim3* BLOCK_DIM, dim3* GRID_DIM,
-                            int *shared_mem){
+/**
+ * Compute the dimensions of the kernel w.r.t. the number of non-zeros per row and k.
+ *
+ * @param csr           CSR structure
+ * @param k             number of columns in the multi-vector
+ * @param blocks        array of pointers to starting row per block
+ * @param num_blocks    total number of blocks computed
+ * @param BLOCK_DIM     pointer to the block dimensions
+ * @param GRID_DIM      pointer to the grid dimensions
+ * @param shared_mem    pointer to the amount of shared memory
+ * */
+void compute_csr_dimensions(CSR* csr, int k, int* blocks, int *num_blocks, dim3* BLOCK_DIM, dim3* GRID_DIM, int *shared_mem){
 
     int m = csr->M, nz = csr->NZ, *irp = csr->IRP;
 
-    // 1D block dimension: average number of non-zeros per row.
-    int bd = ROUND_UP_MULT(ROUND_UP(nz,m), WARP_SIZE); // round up the size of the block to a multiple of warpSize
+    // 1D BLOCKS: average number of non-zeros per row rounded up to a multiple of warpSize
+    int bd = ROUND_UP_MULT(ROUND_UP(nz,m), WARP_SIZE);
     if (bd > MAX_THREADS_BLOCK) bd = MAX_THREADS_BLOCK; // check maximum threads per block limit
 
+    // shared memory is used only when k is lower than half warp size (spmm_csr_vector_small)
     // no need to check memory limit for the limit on BD will limit the memory to 1024 * 8
-    unsigned int shm = (k < WARP_SIZE) ? bd * sizeof(Type) : 0;
+    int shm = (k < WARP_SIZE >> 1) ? bd * sizeof(Type) : 0;
 
-    // 1D grid dimension: compute row balancing on blocks and number of blocks needed
+    // 1D GRID: compute row balancing on blocks and number of blocks needed
     int nb = get_rows_per_block(bd, m, irp, blocks);
 
     // output
@@ -200,6 +218,8 @@ void alloc_cuda_csr(CSR* csr, int* blocks, int num_blocks, int **d_irp, int **d_
     int size_ja = nz*sizeof(int);
     int size_as = nz*sizeof(Type);
     int size_blocks = num_blocks*sizeof(int);
+
+    printf("CSR BYTES: %d\n", size_irp + size_ja + size_as + size_blocks);
 
     checkCudaErrors(cudaMalloc((void**) d_irp, size_irp));
     checkCudaErrors(cudaMalloc((void**) d_ja, size_ja));
