@@ -18,6 +18,8 @@
 #define MAX(a,b) (a > b ? a : b)
 #define MIN(a,b) (a < b ? a : b)
 
+typedef double Type;
+
 /**
  * Elem:
  *      Node of elements lists used to temporarily store the non-zeros read from files
@@ -29,7 +31,7 @@
  * */
 typedef struct elem {
     int j;
-    double val;
+    Type val;
     int nz;
     struct elem* next;
 } Elem;
@@ -51,7 +53,7 @@ typedef struct csr {
     int NZ;
     int* IRP;
     int* JA;
-    double* AS;
+    Type* AS;
 } CSR;
 
 /**
@@ -70,20 +72,20 @@ typedef struct ell {
     int NZ;
     int MAXNZ;
     int* JA;
-    double* AS;
+    Type* AS;
 } ELL;
 
 //-------------------------------------------------Functions signatures
 // io
-void read_multivector(double*, int, int);
-void save_result(double*, int, int);
-void print_matrix(double*, int, int, char*);
+void read_multivector(Type*, int, int);
+void save_result(Type*, int, int);
+void print_matrix(Type*, int, int, char*);
 void print_csr(CSR*);
 void print_ell(ELL*);
 
 // serial
-void serial_product_csr(CSR*, const double*, int, double*);
-void serial_product_ell(ELL*, const double*, int, double*);
+void serial_product_csr(CSR*, const Type*, int, Type*);
+void serial_product_ell(ELL*, const Type*, int, Type*);
 
 // storage
 Elem** read_mm(FILE*, int*, int*, int*, const MM_typecode);
@@ -93,13 +95,12 @@ CSR* alloc_csr(int, int, int);
 ELL* alloc_ell(Elem**, int, int, int, int*);
 
 // utils
-void alloc_struct(double**, int, int);
+void alloc_struct(Type**, int, int);
 void process_mm(MM_typecode*, FILE*);
 void malloc_handler(int, void**);
 void clean_up(int, void**);
-void populate_multivector(double*, int, int);
-void get_errors(int, double*, double*, double*, double*);
-void tokenize_output (char* output, double* gs, double* gp, double* ae, double* re);
+void populate_multivector(Type*, int, int);
+void get_errors(int, Type*, Type*, Type*, Type*);
 
 
 

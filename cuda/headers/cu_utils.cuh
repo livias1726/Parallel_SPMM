@@ -21,10 +21,11 @@ extern "C"{
 #define L2_CACHE_SIZE 4096*1024             // dimension of L2 cache in Bytes
 #define CACHE_LINE_SIZE 128
 #define REG_PER_BLOCK 65536                 // max number of registers per block (64k)
+#define MAX_GM 16900423680                  // max global memory (bytes)
 
 // UTILS
 #define FULL_WARP_MASK 0xffffffff
 
 //--------------------------------------------- Signatures ---------------------------------------------------------//
 void process_arguments(int argc, char **argv, FILE **f, int *k);
-void alloc_cuda_spmm(double **d_x, double **d_y, const double *x, int m, int n, int k);
+void alloc_cuda_spmm(Type **d_x, Type **d_y, const Type *x, int m, int n, int k);

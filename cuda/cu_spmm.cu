@@ -1,5 +1,5 @@
 #ifdef ELLPACK
-    #include "headers/cu_ell.cuh"
+    #include "headers/cu_hll.cuh"
 #else
     #include "headers/cu_csr.cuh"
 #endif
@@ -11,11 +11,11 @@ int main(int argc, char** argv) {
     int k, m, n, nz;
 
     double flop, gflops_s, gflops_p;
-    double abs_err, rel_err;
+    Type abs_err, rel_err;
 
-    double *x, *d_x, *y_s, *y_p, *d_y;
+    Type *x, *d_x, *y_s, *y_p, *d_y;
 
-    double *d_as;
+    Type *d_as;
     int *d_ja;
 
     StopWatchInterface* timer = 0;
@@ -24,7 +24,8 @@ int main(int argc, char** argv) {
 
 #ifdef ELLPACK
     ELL *ell;   // used for serial product and as input to compute an HELL structure
-    int maxnz;
+    HLL *hll; // used for gpu product
+    int *d_maxnz, *d_hack_offset;
 #else
     CSR *csr;
     int num_blocks, *blocks;
@@ -90,16 +91,15 @@ int main(int argc, char** argv) {
     // --------------------------------------------- GPU SpMM -------------------------------------------------- //
 
     // to avoid bank conflicts when double values are used
-    checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
+    if (sizeof(Type) == 8) checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
 
 #ifdef ELLPACK
-    maxnz = ell->MAXNZ;
-    compute_ell_dimensions(m, maxnz, k, &BLOCK_DIM, &GRID_DIM, &shared_mem);
-    alloc_cuda_ell(ell, &d_ja, &d_as);
+    compute_hll_dimensions(ell, k, &hll, &BLOCK_DIM, &GRID_DIM, &shared_mem);
+    alloc_cuda_hll(hll, GRID_DIM.x, &d_maxnz, &d_hack_offset, &d_ja, &d_as);
 
     // product
     timer->start();
-    spmm_ell_kernel<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, maxnz, d_ja, d_as, d_x, k, d_y);
+    spmm_hll_kernel<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, d_maxnz, d_hack_offset, d_ja, d_as, d_x, k, d_y);
 #else
     blocks = (int*)malloc((m+1)*sizeof(int));
     compute_csr_dimensions(csr, k, blocks, &num_blocks, &BLOCK_DIM, &GRID_DIM, &shared_mem);
@@ -113,7 +113,7 @@ int main(int argc, char** argv) {
     timer->stop();
 
     gflops_p = (double)flop/((timer->getTime())*1.e6);
-    checkCudaErrors(cudaMemcpy(y_p, d_y, m * k * sizeof(double), cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(y_p, d_y, m * k * sizeof(Type), cudaMemcpyDeviceToHost));
 
     // check results
     // --> double: relative error should be as close as possible to 2.22e−16 (IEEE double precision unit roundoff)
@@ -131,7 +131,9 @@ int main(int argc, char** argv) {
 
     // ------------------------------------------- Cleaning up ------------------------------------------------- //
 #ifdef ELLPACK
-    delete[] ell;
+    checkCudaErrors(cudaFree(d_maxnz));
+    checkCudaErrors(cudaFree(d_hack_offset));
+    delete[] hll;
 #else
     checkCudaErrors(cudaFree(d_irp));
     checkCudaErrors(cudaFree(d_blocks));
