@@ -9,7 +9,7 @@ void process_mm(MM_typecode* t, FILE *f){
 
     // check matrix double support
     if ((!mm_is_real(*t) || !mm_is_pattern(*t)) && !mm_is_sparse(*t)) {
-        printf("This application does not support Market Market double: [%s]\n", mm_typecode_to_str(*t));
+        printf("This application does not support Market Market type: [%s]\n", mm_typecode_to_str(*t));
         exit(-1);
     }
 }
