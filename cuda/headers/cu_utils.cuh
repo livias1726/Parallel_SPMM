@@ -4,10 +4,6 @@
 #include <helper_cuda.h>  // For checkCudaError macro
 #include <helper_timer.h>  // For CUDA SDK timers
 
-#ifndef SCPA_PROJECT_CU_UTILS_H
-    #define SCPA_PROJECT_CU_UTILS_H
-#endif
-
 extern "C"{
 #include "../../utils/headers/utils.h"
 };

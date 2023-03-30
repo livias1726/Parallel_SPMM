@@ -13,7 +13,7 @@ __device__ void spmm_ell(int rows, int start, int maxnz, const int *ja, const Ty
 
     const int tx = threadIdx.x, ty = threadIdx.y;
     const int bdx = blockDim.x, bdy = blockDim.y;
-    const int bx = blockIdx.x, by = blockIdx.y; //const int bx = blockIdx.y, by = blockIdx.x;
+    const int bx = blockIdx.x, by = blockIdx.y; // const int bx = blockIdx.y, by = blockIdx.x; //
 
     const int i = ty + (bdy * bx);  // global row id of the thread
     if (i >= rows) return;          // the last block will eventually overflow the total number of rows
@@ -31,9 +31,8 @@ __device__ void spmm_ell(int rows, int start, int maxnz, const int *ja, const Ty
     LDS[tid] = 0.0;
     for (int j = tx; j < maxnz; j += bdx) { // do not break the loop when padding is reached to avoid mining warp flow
         idx = s + j;
-        LDS[tid] += __dmul_rn(as[idx], x[ja[idx] * k + by]);
+        LDS[tid] += as[idx] * x[ja[idx] * k + by];
     }
-    //__syncthreads();
     __syncwarp();
 
     /* *
@@ -42,7 +41,6 @@ __device__ void spmm_ell(int rows, int start, int maxnz, const int *ja, const Ty
      *      To do a correct reduction, the initial offset must be set at half the x block dimension.
      * */
     LDS[tid] = sub_reduce(bdx>>1, LDS[tid]);
-    //__syncthreads();
     if (tx == 0) y[i * k + by] = LDS[tid]; // let the first warp take care of the update
 }
 
