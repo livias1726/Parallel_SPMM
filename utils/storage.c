@@ -55,11 +55,13 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: c
             }
 
             // some matrices still have zero values in their representation: this condition avoids
+#ifdef ELLPACK
             if (elem->val == 0) {
                 free(elem);
                 *nz -= 1;
                 continue;
             }
+#endif
         }
 
         elem->j = --c;

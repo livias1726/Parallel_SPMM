@@ -98,10 +98,9 @@ __device__ void spmm_csr_vector_small(const int *irp, const int *ja, const Type 
     int j, r_y;
     for (int i = start + wid; i < end; i += warps) { // warp takes the row
         r_y = i * k;
-
         // ACCUMULATION
         LDS[tid_b] = 0.0;
-        if (swid != sub_warps) { // excludes the truncated sub-warp
+        if (swid < sub_warps) { // excludes the truncated sub-warp
             for (j = irp[i] + swid; j < irp[i+1]; j += sub_warps) { // sub warp takes the non-zero
                 // thread in sub warp takes the specific value of x
                 LDS[tid_b] += as[j] * x[ja[j] * k + tid_sw];
@@ -218,8 +217,6 @@ void alloc_cuda_csr(CSR* csr, int* blocks, int num_blocks, int **d_irp, int **d_
     int size_ja = nz*sizeof(int);
     int size_as = nz*sizeof(Type);
     int size_blocks = num_blocks*sizeof(int);
-
-    printf("CSR BYTES: %d\n", size_irp + size_ja + size_as + size_blocks);
 
     checkCudaErrors(cudaMalloc((void**) d_irp, size_irp));
     checkCudaErrors(cudaMalloc((void**) d_ja, size_ja));

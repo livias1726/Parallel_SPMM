@@ -28,9 +28,10 @@ void save_result(Type* y, int rows, int cols) {
 }
 
 void print_matrix(Type* mat, int rows, int cols, char* msg){
+    int i, j;
     fprintf(stdout, "%s", msg);
-    for (int i=0; i < rows; i++) {
-        for (int j=0; j < cols; j++) {
+    for (i = 0; i < rows; i++) {
+        for (j = 0; j < cols; j++) {
             fprintf(stdout, "\t%.16g", mat[i*cols+j]);
         }
         fprintf(stdout, "\n");
@@ -46,10 +47,10 @@ void print_csr(CSR* csr){
     fprintf(stdout, "\tRow pointers: [");
 
     int i;
-    for (i = 0; i < m-1; i++) {
+    for (i = 0; i < m; i++) {
         fprintf(stdout, "%d, ", irp[i]);
     }
-    fprintf(stdout, "%d]\n", irp[m-1]);
+    fprintf(stdout, "%d]\n", irp[m]);
 
     fprintf(stdout, "Value (Column):\n");
     for (i = 0; i < nz-1; i++) {
