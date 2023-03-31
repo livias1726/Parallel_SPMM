@@ -14,6 +14,10 @@ elseif(DEBUG)
     add_definitions(-DDEBUG=1)
 endif ()
 
+if (SAVE)
+    add_definitions(-DSAVE=1)
+endif ()
+
 if(ELLPACK)
     add_definitions(-DELLPACK=1)
 endif()

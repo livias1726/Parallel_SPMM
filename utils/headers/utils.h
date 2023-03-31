@@ -78,7 +78,7 @@ typedef struct ell {
 //-------------------------------------------------Functions signatures
 // io
 void read_multivector(Type*, int, int);
-void save_result(Type*, int, int);
+void save_result(char*, Type*, int, int);
 void print_matrix(Type*, int, int, char*);
 void print_csr(CSR*);
 void print_ell(ELL*);

@@ -97,7 +97,7 @@ int main(int argc, char** argv) {
     // check results
     get_errors(m, k, y_s, y_p, &abs_err, &rel_err);
 #ifdef SAVE
-    save_result(y_p, m, k);
+    save_result(argv[1], y_p, m, k);
 #endif
 #ifdef DEBUG
     print_matrix(y_s, m, k, "\nSerial Result:\n");

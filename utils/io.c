@@ -14,13 +14,19 @@ void read_multivector(Type* vec, int rows, int cols) {
     fclose(f);
 }
 
-void save_result(Type* y, int rows, int cols) {
+void save_result(char* name, Type* y, int rows, int cols) {
     int i, j;
 
-    FILE *f = fopen("result.txt", "w");
+    // create file path
+    name[strlen(name) - 4] = 0;
+
+    char path[PATH_MAX];
+    snprintf(path, PATH_MAX, "resources/results/%s_%d.txt", name, cols);
+
+    FILE *f = fopen(path, "w");
     for (i=0; i<rows; i++){
         for (j=0; j<cols; j++) {
-            fprintf(f, "%lf ", y[i*cols+j]);
+            fprintf(f, "%.16g ", y[i*cols+j]);
         }
         fprintf(f, "\n");
     }
