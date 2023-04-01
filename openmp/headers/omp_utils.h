@@ -1,6 +1,7 @@
 #include <omp.h>
+#include <immintrin.h>
 #include "../../utils/headers/utils.h"
 
-int* ell_nz_balancing(int ts, ELL* ell, int*, int*);
-int* csr_nz_balancing(int ts, int tot_nz, const int* irp, int tot_rows);
+#define L1_CACHE 32*1024
+
 void process_arguments(int argc, char** argv, FILE **f, int* k, int*);

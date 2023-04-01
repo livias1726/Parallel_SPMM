@@ -3,7 +3,7 @@
 
 #define NUM_RUNS 10
 #define NUM_K 7
-#define NUM_THREADS 4
+#define NUM_THREADS 40
 #define PATH "resources\\files\\"
 #define PROGRAM "cmake-build-debug/openmp/omp_spmm "
 

@@ -9,15 +9,11 @@ int main(int argc, char** argv) {
     MM_typecode t;
     FILE *f;
     int k, m, n, nz;
-
     double flop, gflops_s, gflops_p;
     Type abs_err, rel_err;
-
     Type *x, *d_x, *y_s, *y_p, *d_y;
-
     Type *d_as;
     int *d_ja;
-
     StopWatchInterface* timer = 0;
     dim3 BLOCK_DIM, GRID_DIM;
     int shared_mem;
@@ -132,7 +128,7 @@ int main(int argc, char** argv) {
     print_matrix(y_p, m, k, "\nParallel Result:\n");
 #endif
 
-    // ------------------------------------------- Cleaning up ------------------------------------------------- //
+    // ------------------------------------------- Clean up ------------------------------------------------- //
 #ifdef ELLPACK
     checkCudaErrors(cudaFree(d_maxnz));
     checkCudaErrors(cudaFree(d_hack_offset));
@@ -156,6 +152,7 @@ int main(int argc, char** argv) {
 
     cudaDeviceReset();
 
+    // ---------------------------------------------- Results -------------------------------------------------- //
 #ifdef PERFORMANCE
     fprintf(stdout, "%f %f %lf %lf", gflops_s, gflops_p, abs_err, rel_err);
 #else

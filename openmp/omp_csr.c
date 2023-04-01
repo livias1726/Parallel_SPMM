@@ -1,36 +1,113 @@
 #include "headers/omp_csr.h"
+#include <stdint.h>
+#include <string.h>
+
+void print512d(__m512d vec, int tid){
+    double_t val[8];
+    memcpy(val, &vec, sizeof(val));
+    printf("%d: [%f %f %f %f %f %f %f %f]\n",
+           tid, val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7]);
+}
+
+void print256i(__m256i vec, int tid){
+    uint32_t val[8];
+    memcpy(val, &vec, sizeof(val));
+    printf("%d: [%i %i %i %i %i %i %i %i]\n",
+           tid, val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7]);
+}
 
 /**
  * Computes the product with A stored in a CSR format
  *
  * @param mat matrix in csr format
- * @param rows_load balanced load of rows per thread (wrt the number of non-zeros to process)
+ * @param rows_load number of rows per thread
+ * @param threads number of threads
  * @param x multivector Nxk stored as 1D array
  * @param k number of columns of x
  * @param y receives product results Mxk stored as 1D array
  * */
-//TODO: test --> avoid cache conflicts and exploit 64 bytes at a time for each row
-void spmm_csr(CSR *mat, const int* rows_load, int threads, double* x, int k, double* y){
+void spmm_csr_64(CSR *mat, const int* rows_load, int threads, const Type* x, int k, Type* y){
 
     int *irp = mat->IRP, *ja = mat->JA;
-    double *as = mat->AS;
+    Type *as = mat->AS;
 
-    int i, j, z;
-    double *t, *x_r, val;
-#pragma omp parallel for num_threads(threads) \
-                                private(i, t, j, x_r, val, z) \
-                                shared(threads, rows_load, irp, k, as, ja, x, y) default(none)
+    const __m256i scale = _mm256_set1_epi32(k), one = _mm256_set1_epi32(1);
+
+    #pragma omp parallel for num_threads(threads) shared(threads, rows_load, irp, k, as, ja, x, y, scale, one) default(none)
+    for (int tid = 0; tid < threads; tid++) {   // parallelize on threads' id
+
+        int j, z, iter, lim;
+        __m256i cols;
+        __m512d vals, x_r;
+        __m512d t[k];
+        // init t vector
+        for (z = 0; z < k; z++) { t[z] = _mm512_setzero_pd(); }
+
+        for (int i = rows_load[tid]; i < rows_load[tid + 1]; i++) { // thread gets the row to process
+            j = irp[i];
+            lim = (irp[i+1] - j) / 8;
+
+            for (iter = 0; iter < lim; iter++) {
+
+                vals = _mm512_loadu_pd(&as[j]);                 // load 8 64-bit elements
+                cols = _mm256_loadu_si256((__m256i*)&ja[j]);    // load 8 32-bit elements columns
+                cols = _mm256_mullo_epi32(cols, scale);           // scale col index to be on the first column of x
+                x_r = _mm512_i32gather_pd(cols, x, 8);          // build 8 64-bit elements from x and cols
+                t[0] = _mm512_fmadd_pd(vals, x_r, t[0]);        // execute a fused multiply-add
+
+                for (z = 1; z < k; z++) {
+                    cols = _mm256_add_epi32(cols, one);
+                    x_r = _mm512_i32gather_pd(cols, x, 8);      // build 8 64-bit elements from x and cols
+                    t[z] = _mm512_fmadd_pd(vals, x_r, t[z]);    // execute a fused multiply-add
+                }
+
+                j += 8;
+            }
+
+            // remainder loop if elements are not multiple of size
+            for (; j < irp[i+1]; j++) {
+                for (z = 0; z < k; z++) {
+                    y[i * k + z] += as[j] * x[ja[j] * k + z];
+                }
+            }
+
+            // reduce all 64-bit elements in t by addition
+            for (z = 0; z < k; z++) {
+                y[i * k + z] += _mm512_reduce_add_pd(t[z]);
+                t[z] = _mm512_setzero_pd();
+            }
+        }
+    }
+}
+
+void spmm_csr(CSR *mat, const int* rows_load, int threads, const Type* x, int k, Type* y){
+    if (sizeof(Type) == 8) {
+        spmm_csr_64(mat, rows_load, threads, x, k, y);
+    } else {
+        //spmm_csr_32();
+    }
+}
+ /*
+void spmm_csr(CSR *mat, const int* rows_load, int threads, Type* x, int k, Type* y){
+
+    int *irp = mat->IRP, *ja = mat->JA;
+    Type *as = mat->AS;
+
+#pragma omp parallel for num_threads(threads) shared(threads, rows_load, irp, k, as, ja, x, y) default(none)
     for (int tid = 0; tid < threads; tid++) {
-        for (i = rows_load[tid]; i < rows_load[tid + 1]; i++) { // get the specific A's row to process
+        int j, z;
+        Type *t, *x_r, val;
+
+        for (int i = rows_load[tid]; i < rows_load[tid + 1]; i++) { // get the specific A's row to process
             t = &y[i * k]; //the respective Y's row to accumulate products on
 
             for (j = irp[i]; j < irp[i+1]; j++) { // iterate over the nz values in the row
                 // load just once
-                x_r = &x[ja[j] * k]; //the respective X's row index
-                val = as[j]; //the respective NZ value
+                x_r = &x[ja[j] * k];    //the respective X's row index
+                val = as[j];            //the respective NZ value
 
-                // Loop unrolling
-                if (k % 4 == 0) { // avoids to process values like '12' with a 3-level loop unroll
+                // loop unrolling
+                if (k % 4 == 0) {
                     for (z = 0; z < k; z += 4) {
                         t[z] += val * x_r[z];
                         t[z + 1] += val * x_r[z + 1];
@@ -52,47 +129,38 @@ void spmm_csr(CSR *mat, const int* rows_load, int threads, double* x, int k, dou
         }
     }
 }
+  */
+
 
 /**
- * Load balancing related to the amount of non-zeros given to each computational node.
- * The number of non-zeros is always rounded to be contained in a full row to maintain locality
- *
- * OPENMP:
- *      non-zeros are balanced on the number of threads that will operate the product
- * MPI:
- *      non-zeros are balanced on the number of processes that will operate the product
- *      inside every process - openmp threads will work on the given rows in parallel
+ * Load balancing related to the amount of non-zeros given to each thread.
+ * The number of non-zeros is always rounded to be contained in a full row to maintain locality.
  * */
-int* csr_nz_balancing(int ts, int tot_nz, const int* irp, int tot_rows){
-    int i, j, r1, nz, start_row = 0, r2 = 0;
+void csr_nz_balancing(int threads, int tot_nz, const int* irp, int tot_rows, int* rows_idx){
+    int j, nz, nz_prev = 0, nz_curr, start_row = 0, r_prev, r_curr = 0;
 
-    int* rows_idx = (int*) malloc((ts+1) * sizeof(int));
-    malloc_handler(1, (void*[]){rows_idx});
-
-    for (i = 0; i < ts; i++) {
+    for (int i = 0; i < threads; i++) {
         rows_idx[i] = start_row; // add the idx of the start row
 
-        if (i == ts-1) { // if last thread, get the remaining rows
-            rows_idx[i+1] = tot_rows;
-            break;
-        }
-
-        nz = ((i + 1) * tot_nz) / ts - (i * tot_nz) / ts; // compute the number of tot_nz to assign the i-th thread
+        // compute the number of non-zeros to assign the i-th thread
+        nz_curr = ((i + 1) * tot_nz) / threads;
+        nz = nz_curr - nz_prev;
+        nz_prev = nz_curr;
 
         for (j = start_row; j < tot_rows; j++) {
-            r2 += irp[j + 1] - irp[j]; // get number of nz in the considered rows
+            r_curr += irp[j + 1] - irp[j]; // get number of nz in the considered rows
 
-            if (r2 < nz) { // if the count of nz is still lower than the number of nz assigned to the thread
-                r1 = r2; // save value
+            if (r_curr < nz) { // if the count of nz is still lower than the number of nz assigned to the thread
+                r_prev = r_curr; // save value
             } else {
                 // get the number of rows that includes a number of nz closer to the one assigned
-                start_row = ((r2 - nz) < (nz - r1)) ? j+1 : j;
+                start_row = ((r_curr - nz) < (nz - r_prev)) ? j + 1 : j;
                 break;
             }
         }
 
-        r2 = 0;
+        r_curr = 0;
     }
 
-    return rows_idx;
+    rows_idx[threads] = tot_rows; // last thread gets the remaining rows
 }
