@@ -17,6 +17,7 @@
 #define ROUND_UP_MULT(a, b) (ROUND_UP(a,b) * b)
 #define MAX(a,b) (a > b ? a : b)
 #define MIN(a,b) (a < b ? a : b)
+#define INT_LOAD_BALANCE(idx, tot, num) (((idx + 1) * tot) / num) - ((idx * tot) / num)
 
 typedef double Type;
 

@@ -1,49 +1,15 @@
 #include "headers/omp_csr.h"
-#include <stdint.h>
-#include <string.h>
-
-void print512d(__m512d vec, int tid, int dim){
-    double_t val[dim];
-    memcpy(val, &vec, sizeof(val));
-
-    printf("%d: [", tid);
-    for (int i = 0; i < dim; i++) {
-        printf("%f ", val[i]);
-    }
-    printf("]\n");
-}
-
-void print512(__m512 vec, int tid, int dim){
-    float_t val[dim];
-    memcpy(val, &vec, sizeof(val));
-
-    printf("%d: [", tid);
-    for (int i = 0; i < dim; i++) {
-        printf("%f ", val[i]);
-    }
-    printf("]\n");
-}
-
-void print512i(__m512i vec, int tid, int dim){
-    uint32_t val[dim];
-    memcpy(val, &vec, sizeof(val));
-
-    printf("%d: [", tid);
-    for (int i = 0; i < dim; i++) {
-        printf("%i ", val[i]);
-    }
-    printf("]\n");
-}
 
 /**
- * Computes the product with A stored in a CSR format
+ * CSR SpMM with double values using SIMD processing with
+ * Intel's Advanced Vector Extensions (AVX) intrinsic functions.
  *
  * @param mat matrix in csr format
  * @param rows_load number of rows per thread
  * @param threads number of threads
- * @param x multivector Nxk stored as 1D array
+ * @param x multivector stored as a 1D array
  * @param k number of columns of x
- * @param y receives product results Mxk stored as 1D array
+ * @param y receives product results stored as a 1D array
  * */
 void spmm_csr_64(CSR *mat, const int* rows_load, int threads, const Type* x, int k, Type* y){
 
@@ -69,8 +35,9 @@ void spmm_csr_64(CSR *mat, const int* rows_load, int threads, const Type* x, int
 
         for (int i = rows_load[tid]; i < rows_load[tid + 1]; i++) { // thread gets the row to process
             j = irp[i];
-            lim = (irp[i+1] - j) / PD_STRIDE;
 
+            // Perform a SIMD product on chunks of 8 non-zeros
+            lim = (irp[i+1] - j) / PD_STRIDE;
             for (iter = 0; iter < lim; iter++) {
 
                 vals = _mm512_loadu_pd(&as[j]);                     // load 8 64-bit elements
@@ -111,6 +78,17 @@ void spmm_csr_64(CSR *mat, const int* rows_load, int threads, const Type* x, int
     }
 }
 
+/**
+ * CSR SpMM with float values using SIMD processing with
+ * Intel's Advanced Vector Extensions (AVX) intrinsic functions.
+ *
+ * @param mat matrix in csr format
+ * @param rows_load number of rows per thread
+ * @param threads number of threads
+ * @param x multivector Nxk stored as 1D array
+ * @param k number of columns of x
+ * @param y receives product results Mxk stored as 1D array
+ * */
 void spmm_csr_32(CSR *mat, const int* rows_load, int threads, const Type* x, int k, Type* y){
 
     int *irp = mat->IRP;
@@ -187,33 +165,30 @@ void spmm_csr(CSR *mat, const int* rows_load, int threads, const Type* x, int k,
 
 /**
  * Load balancing related to the amount of non-zeros given to each thread.
- * The number of non-zeros is always rounded to be contained in a full row to maintain locality.
+ * The number of non-zeros is always rounded to be contained in a full row.
  * */
 void csr_nz_balancing(int threads, int tot_nz, const int* irp, int tot_rows, int* rows_idx){
-    int j, nz, nz_prev = 0, nz_curr, start_row = 0, r_prev, r_curr = 0;
+    int j, nz, nz_prev, nz_curr;
 
-    for (int i = 0; i < threads; i++) {
-        rows_idx[i] = start_row; // add the idx of the start row
+    rows_idx[0] = 0;
+    for (int i = 1; i < threads; i++) {
         printf("."); // TODO: why this print enormously speed omp product???
 
         // compute the number of non-zeros to assign the i-th thread
-        nz_curr = ((i + 1) * tot_nz) / threads;
-        nz = nz_curr - nz_prev;
-        nz_prev = nz_curr;
+        nz = INT_LOAD_BALANCE(i, tot_nz, threads);
 
-        for (j = start_row; j < tot_rows; j++) {
-            r_curr += irp[j + 1] - irp[j]; // get number of nz in the considered rows
+        nz_curr = 0;
+        for (j = rows_idx[i-1]; j < tot_rows; j++) {
+            nz_curr += irp[j + 1] - irp[j]; // get number of nz in the considered rows
 
-            if (r_curr < nz) { // if the count of nz is still lower than the number of nz assigned to the thread
-                r_prev = r_curr; // save value
-            } else {
+            if (nz_curr >= nz) {
                 // get the number of rows that includes a number of nz closer to the one assigned
-                start_row = ((r_curr - nz) < (nz - r_prev)) ? j + 1 : j;
+                rows_idx[i] = ((nz_curr - nz) < (nz - nz_prev)) ? j + 1 : j;
                 break;
             }
-        }
 
-        r_curr = 0;
+            nz_prev = nz_curr; // count of nz is still lower than the number of nz assigned to the thread
+        }
     }
 
     rows_idx[threads] = tot_rows; // last thread gets the remaining rows
