@@ -160,9 +160,9 @@ CSR* alloc_csr(int m, int n, int nz){
     CSR* mat = (CSR*) malloc(sizeof(CSR));
     malloc_handler(1, (void* []) {mat});
 
-    mat->IRP = (int*)malloc((m+1)*sizeof(int));
-    mat->JA = (int*)malloc(nz*sizeof(int));
-    mat->AS = (Type*)malloc(nz*sizeof(Type));
+    mat->IRP = (int*)malloc((m + 1) * sizeof(int));
+    mat->JA = (int*)malloc(nz * sizeof(int));
+    mat->AS = (Type*)malloc(nz * sizeof(Type));
     malloc_handler(3, (void* []) {mat->IRP, mat->JA, mat->AS});
 
     // populate CSR format

@@ -2,18 +2,37 @@
 #include <stdint.h>
 #include <string.h>
 
-void print512d(__m512d vec, int tid){
-    double_t val[8];
+void print512d(__m512d vec, int tid, int dim){
+    double_t val[dim];
     memcpy(val, &vec, sizeof(val));
-    printf("%d: [%f %f %f %f %f %f %f %f]\n",
-           tid, val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7]);
+
+    printf("%d: [", tid);
+    for (int i = 0; i < dim; i++) {
+        printf("%f ", val[i]);
+    }
+    printf("]\n");
 }
 
-void print256i(__m256i vec, int tid){
-    uint32_t val[8];
+void print512(__m512 vec, int tid, int dim){
+    float_t val[dim];
     memcpy(val, &vec, sizeof(val));
-    printf("%d: [%i %i %i %i %i %i %i %i]\n",
-           tid, val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7]);
+
+    printf("%d: [", tid);
+    for (int i = 0; i < dim; i++) {
+        printf("%f ", val[i]);
+    }
+    printf("]\n");
+}
+
+void print512i(__m512i vec, int tid, int dim){
+    uint32_t val[dim];
+    memcpy(val, &vec, sizeof(val));
+
+    printf("%d: [", tid);
+    for (int i = 0; i < dim; i++) {
+        printf("%i ", val[i]);
+    }
+    printf("]\n");
 }
 
 /**
@@ -28,53 +47,131 @@ void print256i(__m256i vec, int tid){
  * */
 void spmm_csr_64(CSR *mat, const int* rows_load, int threads, const Type* x, int k, Type* y){
 
-    int *irp = mat->IRP, *ja = mat->JA;
+    int *irp = mat->IRP;
+    int *ja = mat->JA;
     Type *as = mat->AS;
 
-    const __m256i scale = _mm256_set1_epi32(k), one = _mm256_set1_epi32(1);
+    const __m256i scale = _mm256_set1_epi32(k);
 
-    #pragma omp parallel for num_threads(threads) shared(threads, rows_load, irp, k, as, ja, x, y, scale, one) default(none)
+    #pragma omp parallel for num_threads(threads) shared(threads, rows_load, irp, k, as, ja, x, y, scale) default(none)
     for (int tid = 0; tid < threads; tid++) {   // parallelize on threads' id
-
-        int j, z, iter, lim;
+        // private params
+        int j, z, iter, lim, r_y, r_x;
+        Type val;
         __m256i cols;
         __m512d vals, x_r;
+
         __m512d t[k];
-        // init t vector
-        for (z = 0; z < k; z++) { t[z] = _mm512_setzero_pd(); }
+        #pragma omp unroll partial
+        for (z = 0; z < k; z++) {
+            t[z] = _mm512_setzero_pd(); // init t vector
+        }
 
         for (int i = rows_load[tid]; i < rows_load[tid + 1]; i++) { // thread gets the row to process
             j = irp[i];
-            lim = (irp[i+1] - j) / 8;
+            lim = (irp[i+1] - j) / PD_STRIDE;
 
             for (iter = 0; iter < lim; iter++) {
 
-                vals = _mm512_loadu_pd(&as[j]);                 // load 8 64-bit elements
-                cols = _mm256_loadu_si256((__m256i*)&ja[j]);    // load 8 32-bit elements columns
-                cols = _mm256_mullo_epi32(cols, scale);           // scale col index to be on the first column of x
-                x_r = _mm512_i32gather_pd(cols, x, 8);          // build 8 64-bit elements from x and cols
-                t[0] = _mm512_fmadd_pd(vals, x_r, t[0]);        // execute a fused multiply-add
+                vals = _mm512_loadu_pd(&as[j]);                     // load 8 64-bit elements
+                cols = _mm256_loadu_si256((__m256i*)&ja[j]);        // load 8 32-bit elements columns
+                cols = _mm256_mullo_epi32(cols, scale);             // scale col index to be on the first column of x
+                x_r = _mm512_i32gather_pd(cols, x, sizeof(Type));   // build 8 64-bit elements from x and cols
+                t[0] = _mm512_fmadd_pd(vals, x_r, t[0]);            // execute a fused multiply-add
 
                 for (z = 1; z < k; z++) {
-                    cols = _mm256_add_epi32(cols, one);
-                    x_r = _mm512_i32gather_pd(cols, x, 8);      // build 8 64-bit elements from x and cols
+                    cols = _mm256_add_epi32(cols, _MM8_1);
+                    x_r = _mm512_i32gather_pd(cols, x, sizeof(Type));      // build 8 64-bit elements from x and cols
                     t[z] = _mm512_fmadd_pd(vals, x_r, t[z]);    // execute a fused multiply-add
                 }
 
-                j += 8;
+                j += PD_STRIDE;
             }
+
+            r_y = i * k;
 
             // remainder loop if elements are not multiple of size
             for (; j < irp[i+1]; j++) {
+                val = as[j];
+                r_x = ja[j] * k;
+
+                #pragma omp unroll partial
                 for (z = 0; z < k; z++) {
-                    y[i * k + z] += as[j] * x[ja[j] * k + z];
+                    y[r_y + z] += val * x[r_x + z];
                 }
             }
 
             // reduce all 64-bit elements in t by addition
+            #pragma omp unroll partial
             for (z = 0; z < k; z++) {
-                y[i * k + z] += _mm512_reduce_add_pd(t[z]);
+                y[r_y + z] += _mm512_reduce_add_pd(t[z]);
                 t[z] = _mm512_setzero_pd();
+            }
+        }
+    }
+}
+
+void spmm_csr_32(CSR *mat, const int* rows_load, int threads, const Type* x, int k, Type* y){
+
+    int *irp = mat->IRP;
+    int *ja = mat->JA;
+    Type *as = mat->AS;
+
+    const __m512i scale = _mm512_set1_epi32(k);
+
+    #pragma omp parallel for num_threads(threads) shared(threads, rows_load, irp, k, as, ja, x, y, scale) default(none)
+    for (int tid = 0; tid < threads; tid++) {   // parallelize on threads' id
+        // private params
+        int j, z, iter, lim, r_y, r_x;
+        Type val;
+        __m512i cols;
+        __m512 vals, x_r;
+
+        __m512 t[k];
+        #pragma omp unroll partial
+        for (z = 0; z < k; z++) { // init t vector
+            t[z] = _mm512_setzero_ps();
+        }
+
+        for (int i = rows_load[tid]; i < rows_load[tid + 1]; i++) { // thread gets the row to process
+            j = irp[i];
+            lim = (irp[i+1] - j) / PS_STRIDE;
+
+            for (iter = 0; iter < lim; iter++) {
+
+                vals = _mm512_loadu_ps(&as[j]);                 // load 16 32-bit elements
+                cols = _mm512_loadu_si512(&ja[j]);              // load 16 32-bit elements columns
+                cols = _mm512_mullo_epi32(cols, scale);         // scale col index to be on the first column of x
+                x_r = _mm512_i32gather_ps(cols, x, sizeof(Type));          // build 16 32-bit elements from x and cols
+                t[0] = _mm512_fmadd_ps(vals, x_r, t[0]);        // execute a fused multiply-add
+
+                for (z = 1; z < k; z++) {
+                    cols = _mm512_add_epi32(cols, _MM16_1);         // shift col idx by 1 to shift x column
+                    x_r = _mm512_i32gather_ps(cols, x, sizeof(Type));
+                    t[z] = _mm512_fmadd_ps(vals, x_r, t[z]);
+                }
+
+                j += PS_STRIDE;
+            }
+
+            r_y = i * k;
+
+            // remainder loop if elements are not multiple of size
+            for (; j < irp[i+1]; j++) {
+                val = as[j];
+                r_x = ja[j] * k;
+
+                #pragma omp unroll partial
+                for (z = 0; z < k; z++) {
+                    y[r_y + z] += val * x[r_x + z];
+                }
+            }
+
+            // reduce all 32-bit elements in t by addition
+            #pragma omp unroll partial
+            for (z = 0; z < k; z++) {
+                y[r_y + z] += _mm512_reduce_add_ps(t[z]);
+                t[z] = _mm512_setzero_ps();
             }
         }
     }
@@ -84,53 +181,9 @@ void spmm_csr(CSR *mat, const int* rows_load, int threads, const Type* x, int k,
     if (sizeof(Type) == 8) {
         spmm_csr_64(mat, rows_load, threads, x, k, y);
     } else {
-        //spmm_csr_32();
+        spmm_csr_32(mat, rows_load, threads, x, k, y);
     }
 }
- /*
-void spmm_csr(CSR *mat, const int* rows_load, int threads, Type* x, int k, Type* y){
-
-    int *irp = mat->IRP, *ja = mat->JA;
-    Type *as = mat->AS;
-
-#pragma omp parallel for num_threads(threads) shared(threads, rows_load, irp, k, as, ja, x, y) default(none)
-    for (int tid = 0; tid < threads; tid++) {
-        int j, z;
-        Type *t, *x_r, val;
-
-        for (int i = rows_load[tid]; i < rows_load[tid + 1]; i++) { // get the specific A's row to process
-            t = &y[i * k]; //the respective Y's row to accumulate products on
-
-            for (j = irp[i]; j < irp[i+1]; j++) { // iterate over the nz values in the row
-                // load just once
-                x_r = &x[ja[j] * k];    //the respective X's row index
-                val = as[j];            //the respective NZ value
-
-                // loop unrolling
-                if (k % 4 == 0) {
-                    for (z = 0; z < k; z += 4) {
-                        t[z] += val * x_r[z];
-                        t[z + 1] += val * x_r[z + 1];
-                        t[z + 2] += val * x_r[z + 2];
-                        t[z + 3] += val * x_r[z + 3];
-                    }
-                } else if (k % 3 == 0) {
-                    for (z = 0; z < k; z += 3) {
-                        t[z] += val * x_r[z];
-                        t[z + 1] += val * x_r[z + 1];
-                        t[z + 2] += val * x_r[z + 2];
-                    }
-                } else {
-                    for (z = 0; z < k; z++) {
-                        t[z] += val * x_r[z];
-                    }
-                }
-            }
-        }
-    }
-}
-  */
-
 
 /**
  * Load balancing related to the amount of non-zeros given to each thread.
@@ -141,6 +194,7 @@ void csr_nz_balancing(int threads, int tot_nz, const int* irp, int tot_rows, int
 
     for (int i = 0; i < threads; i++) {
         rows_idx[i] = start_row; // add the idx of the start row
+        printf("."); // TODO: why this print enormously speed omp product???
 
         // compute the number of non-zeros to assign the i-th thread
         nz_curr = ((i + 1) * tot_nz) / threads;
@@ -163,4 +217,5 @@ void csr_nz_balancing(int threads, int tot_nz, const int* irp, int tot_rows, int
     }
 
     rows_idx[threads] = tot_rows; // last thread gets the remaining rows
+    printf("\n");
 }

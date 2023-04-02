@@ -13,6 +13,7 @@ int main(int argc, char** argv) {
     Type abs_err, rel_err;
     Type *x, *y_s, *y_p;
     struct timespec t1, t2;
+
 #ifdef ELLPACK
     ELL *ell;
 #else
@@ -75,6 +76,7 @@ int main(int argc, char** argv) {
     clock_gettime(CLOCK_MONOTONIC, &t1);
     spmm_ell(ell, num_threads, x, k, y_p);
 #else
+
     rows_idx = (int*) malloc((num_threads + 1) * sizeof(int));
     malloc_handler(1, (void*[]){rows_idx});
     csr_nz_balancing(num_threads, nz, csr->IRP, csr->M, rows_idx);
