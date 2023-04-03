@@ -1,5 +1,62 @@
 #include "headers/omp_ell.h"
 
+void spmm_ell_stream(int start, int end, int *ja, Type *as, Type* x, int k, Type* y){
+
+    int z;
+    Type val, *x_r;
+
+    for (int i = start; i < end; ++i) {
+        val = as[i];
+        if (val == 0) break; // if padding is reached break loop
+
+        x_r = &x[ja[i] * k]; // prefetching of the row in x to read from
+
+        #pragma ivdep
+        #pragma omp unroll partial
+        for (z = 0; z < k; z++) {
+            y[z] += val * x_r[z];
+        }
+    }
+}
+
+void spmm_ell_vector(int *ja, Type *as, int start, int end, Type* x, int k, Type* y) {
+
+    int z;
+    __m256i cols;
+    __m512d vals, x_r;
+
+    __m512d t[k];
+    #pragma ivdep
+    #pragma omp unroll partial
+    for (z = 0; z < k; z++) t[z] = _mm512_setzero_pd(); // init t vector
+
+    const __m256i scale = _MM8(k);
+    const __m256i one = _MM8(1);
+
+    #pragma ivdep
+    #pragma omp unroll partial
+    for (int idx = start; idx < end; idx += PD_STRIDE) { // vectorization of 8 elements per iteration
+        vals = _mm512_loadu_pd(&as[idx]);                     // load 8 64-bit elements
+        cols = _mm256_loadu_si256((__m256i*)&ja[idx]);        // load 8 32-bit elements columns
+        cols = _mm256_mullo_epi32(cols, scale);             // scale col index to be on the first column of x
+        x_r = _mm512_i32gather_pd(cols, x, sizeof(Type));   // build 8 64-bit elements from x and cols
+        t[0] = _mm512_fmadd_pd(vals, x_r, t[0]);            // execute a fused multiply-add
+
+        for (z = 1; z < k; z++) {
+            cols = _mm256_add_epi32(cols, one);
+            x_r = _mm512_i32gather_pd(cols, x, sizeof(Type));      // build 8 64-bit elements from x and cols
+            t[z] = _mm512_fmadd_pd(vals, x_r, t[z]);    // execute a fused multiply-add
+        }
+    }
+
+    #pragma ivdep
+    #pragma omp unroll partial
+    for (z = 0; z < k; z++) {
+        y[z] += _mm512_reduce_add_pd(t[z]);
+        t[z] = _mm512_setzero_pd();
+    }
+}
+
 /**
  * Computes the product with A stored in a ELL format
  *
@@ -8,56 +65,40 @@
  * @param k number of columns of x
  * @param y receives product results Mxk stored as 1D array
  * */
-// 1. each thread gets a row from omp
-// 2. in the given row, the thread reads nz value and col idx
-// 3. for each nz in the row, the thread accumulates the partial products, reading x row by row
-void spmm_ell(ELL* mat, int threads, double* x, int k, double* y){
-    int maxnz = mat->MAXNZ, rows = mat->M, *ja = mat->JA;
-    double *as = mat->AS;
+void spmm_ell(ELL* mat, int threads, Type* x, int k, Type* y) {
+    int maxnz = mat->MAXNZ;
+    int rows = mat->M;
+    int *ja = mat->JA;
+    Type *as = mat->AS;
 
-    int z, nz_idx;
-    double *x_r, val, *t;
+    int vector = maxnz / PD_STRIDE;
+    int j = PD_STRIDE * vector;
+    int remainder = maxnz % PD_STRIDE;
 
-#pragma omp parallel for num_threads(threads) \
-                                private(t, nz_idx, val, x_r, z) \
-                                shared(maxnz, rows, ja, as, k, x, y) default(none)
-    for (int i = 0; i < rows; i++) {
-        t = &y[i*k]; // prefetching of the row to update;
+    int start, end, r_y;
 
-        for (int j = 0; j < maxnz; j++) {
-            nz_idx = i*maxnz+j;
+    #pragma omp parallel for num_threads(threads) private(start, end, r_y) \
+                             shared(j, maxnz, rows, ja, as, k, x, y, vector, remainder) default(none)
+    for (int i = 0; i < rows; ++i) { // thread takes the row
+        start = i * maxnz;
+        end = start + j;
+        r_y = i * k;
 
-            val = as[nz_idx];
-            if (val == 0) break; // if padding is reached break loop
+        if (vector) { // the row can be vectorized at least once (maxnz > PD_STRIDE)
+            spmm_ell_vector(ja, as, start, end, x, k, &y[r_y]);
 
-            x_r = &x[ja[nz_idx]*k]; // prefetching of the row in x to read from
-
-            // Loop unrolling
-            if (k % 4 == 0) { // avoids to process values like '12' with a 3-level loop unroll
-                for (z = 0; z < k; z += 4) {
-                    t[z] += val * x_r[z];
-                    t[z+1] += val * x_r[z+1];
-                    t[z+2] += val * x_r[z+2];
-                    t[z+3] += val * x_r[z+3];
-                }
-            } else if (k % 3 == 0) {
-                for (z = 0; z < k; z += 3) {
-                    t[z] += val * x_r[z];
-                    t[z+1] += val * x_r[z+1];
-                    t[z+2] += val * x_r[z+2];
-                }
-            } else {
-                for (z = 0; z < k; z++) {
-                    t[z] += val * x_r[z];
-                }
+            // there are remaining non-zeros that are not padding
+            if (remainder && as[end]) {
+                spmm_ell_stream(end, start + maxnz, ja, as, x, k, &y[r_y]);
             }
+
+        } else {
+            spmm_ell_stream(end, start + maxnz, ja, as, x, k, &y[r_y]);
         }
     }
 }
 
-//TODO:
-// what if the single row has more NZs than the ones to assign to the single thread? Try to divide by blocks
-// ordina le righe di ELL per numero di NZ ??
+// TODO: ???
 void sort_rows(ELL* ell, int *idxs){
     int idx = 0, prev_nz = 0, nz = 0, cols = ell->MAXNZ, rows = ell->M;
     Type *as = ell->AS;

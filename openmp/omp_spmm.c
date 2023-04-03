@@ -73,6 +73,9 @@ int main(int argc, char** argv) {
     // ----------------------------------------------- OpenMP SpMM ---------------------------------------------- //
 
 #ifdef ELLPACK
+    for (int t = 0; t < num_threads; t++) printf("."); // TODO: apparently increases GFLOPS
+    printf("\n");
+    //TODO try to use a synchronization API before!
     clock_gettime(CLOCK_MONOTONIC, &t1);
     spmm_ell(ell, num_threads, x, k, y_p);
 #else
