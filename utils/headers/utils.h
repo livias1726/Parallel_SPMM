@@ -15,8 +15,10 @@
 #define GET_GFLOPS(t1, t2, flop) ( flop / ((t2.tv_sec - t1.tv_sec) * 1.e9 + (t2.tv_nsec - t1.tv_nsec)) )
 #define ROUND_UP(a,b) ((a+b-1)/b)
 #define ROUND_UP_MULT(a, b) (ROUND_UP(a,b) * b)
+
 #define MAX(a,b) (a > b ? a : b)
 #define MIN(a,b) (a < b ? a : b)
+
 #define INT_LOAD_BALANCE(idx, tot, num) (((idx + 1) * tot) / num) - ((idx * tot) / num)
 
 typedef double Type;
@@ -67,6 +69,7 @@ typedef struct csr {
  * @param JA 2D array of non-zeros col indices
  * @param AS 2D array of non-zero values
  * */
+ // TODO: try add ell_metadata with array of maxnz per row and number of nz
 typedef struct ell {
     int M;
     int N;

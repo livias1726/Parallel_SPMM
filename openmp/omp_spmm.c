@@ -9,6 +9,7 @@ int main(int argc, char** argv) {
     MM_typecode t;
     FILE *f;
     int k, m, n, nz, num_threads;
+    int* thread_rows;
     double flop, gflops_s, gflops_p;
     Type abs_err, rel_err;
     Type *x, *y_s, *y_p;
@@ -16,9 +17,9 @@ int main(int argc, char** argv) {
 
 #ifdef ELLPACK
     ELL *ell;
+    int* thread_maxnz;
 #else
     CSR *csr;
-    int* rows_idx;
 #endif
 
     // ------------------------------------------------ Set Up ------------------------------------------- //
@@ -72,19 +73,20 @@ int main(int argc, char** argv) {
 
     // ----------------------------------------------- OpenMP SpMM ---------------------------------------------- //
 
+    thread_rows = (int*) malloc((num_threads + 1) * sizeof(int));
 #ifdef ELLPACK
-    for (int t = 0; t < num_threads; t++) printf("."); // TODO: apparently increases GFLOPS
-    printf("\n");
-    //TODO try to use a synchronization API before!
-    clock_gettime(CLOCK_MONOTONIC, &t1);
-    spmm_ell(ell, num_threads, x, k, y_p);
-#else
-    rows_idx = (int*) malloc((num_threads + 1) * sizeof(int));
-    malloc_handler(1, (void*[]){rows_idx});
-    csr_nz_balancing(num_threads, nz, csr->IRP, csr->M, rows_idx);
+    thread_maxnz = (int*) malloc(num_threads * sizeof(int));
+    malloc_handler(2, (void*[]){thread_rows, thread_maxnz});
+    ell_nz_balancing(ell, num_threads, thread_rows, thread_maxnz);
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
-    spmm_csr(csr, rows_idx, num_threads, x, k, y_p);
+    spmm_ell(ell, thread_rows, thread_maxnz, num_threads, x, k, y_p);
+#else
+    malloc_handler(1, (void*[]){thread_rows});
+    csr_nz_balancing(num_threads, nz, csr->IRP, csr->M, thread_rows);
+
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    spmm_csr(csr, thread_rows, num_threads, x, k, y_p);
 #endif
     clock_gettime(CLOCK_MONOTONIC, &t2);
 

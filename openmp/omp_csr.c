@@ -17,28 +17,28 @@ void spmm_csr_64(CSR *mat, const int* rows_load, int threads, const Type* x, int
     int *ja = mat->JA;
     Type *as = mat->AS;
 
-    const __m256i scale = _mm256_set1_epi32(k);
+    const __m256i scale = _MM8(k);
+    const __m256i one = _MM8(1);
 
-    #pragma omp parallel for num_threads(threads) shared(threads, rows_load, irp, k, as, ja, x, y, scale) default(none)
+    #pragma omp parallel for num_threads(threads) shared(threads, rows_load, irp, k, as, ja, x, y, scale, one) default(none)
     for (int tid = 0; tid < threads; tid++) {   // parallelize on threads' id
         // private params
-        int j, z, iter, lim, r_y, r_x;
+        int j, z, end, r_y, r_x;
         Type val;
         __m256i cols;
-        __m512d vals, x_r;
+        __m512d vals, x_r, t[k];
 
-        __m512d t[k];
+        #pragma ivdep
         #pragma omp unroll partial
-        for (z = 0; z < k; z++) {
-            t[z] = _mm512_setzero_pd(); // init t vector
-        }
+        for (z = 0; z < k; z++) t[z] = _mm512_setzero_pd(); // init t vector
 
         for (int i = rows_load[tid]; i < rows_load[tid + 1]; i++) { // thread gets the row to process
+            r_y = i * k;
             j = irp[i];
+            end = (((irp[i+1] - j) / PD_STRIDE) * PD_STRIDE) + j;
 
             // Perform a SIMD product on chunks of 8 non-zeros
-            lim = (irp[i+1] - j) / PD_STRIDE;
-            for (iter = 0; iter < lim; iter++) {
+            for (; j < end; j += PD_STRIDE) {
 
                 vals = _mm512_loadu_pd(&as[j]);                     // load 8 64-bit elements
                 cols = _mm256_loadu_si256((__m256i*)&ja[j]);        // load 8 32-bit elements columns
@@ -47,28 +47,24 @@ void spmm_csr_64(CSR *mat, const int* rows_load, int threads, const Type* x, int
                 t[0] = _mm512_fmadd_pd(vals, x_r, t[0]);            // execute a fused multiply-add
 
                 for (z = 1; z < k; z++) {
-                    cols = _mm256_add_epi32(cols, _MM8_1);
+                    cols = _mm256_add_epi32(cols, one);
                     x_r = _mm512_i32gather_pd(cols, x, sizeof(Type));      // build 8 64-bit elements from x and cols
                     t[z] = _mm512_fmadd_pd(vals, x_r, t[z]);    // execute a fused multiply-add
                 }
-
-                j += PD_STRIDE;
             }
-
-            r_y = i * k;
 
             // remainder loop if elements are not multiple of size
             for (; j < irp[i+1]; j++) {
                 val = as[j];
                 r_x = ja[j] * k;
 
+                #pragma ivdep
                 #pragma omp unroll partial
-                for (z = 0; z < k; z++) {
-                    y[r_y + z] += val * x[r_x + z];
-                }
+                for (z = 0; z < k; z++) y[r_y + z] += val * x[r_x + z];
             }
 
             // reduce all 64-bit elements in t by addition
+            #pragma ivdep
             #pragma omp unroll partial
             for (z = 0; z < k; z++) {
                 y[r_y + z] += _mm512_reduce_add_pd(t[z]);
@@ -95,9 +91,10 @@ void spmm_csr_32(CSR *mat, const int* rows_load, int threads, const Type* x, int
     int *ja = mat->JA;
     Type *as = mat->AS;
 
-    const __m512i scale = _mm512_set1_epi32(k);
+    const __m512i scale = _MM16(k);
+    const __m512i one = _MM16(1);
 
-    #pragma omp parallel for num_threads(threads) shared(threads, rows_load, irp, k, as, ja, x, y, scale) default(none)
+    #pragma omp parallel for num_threads(threads) shared(threads, rows_load, irp, k, as, ja, x, y, scale, one) default(none)
     for (int tid = 0; tid < threads; tid++) {   // parallelize on threads' id
         // private params
         int j, z, iter, lim, r_y, r_x;
@@ -124,7 +121,7 @@ void spmm_csr_32(CSR *mat, const int* rows_load, int threads, const Type* x, int
                 t[0] = _mm512_fmadd_ps(vals, x_r, t[0]);        // execute a fused multiply-add
 
                 for (z = 1; z < k; z++) {
-                    cols = _mm512_add_epi32(cols, _MM16_1);         // shift col idx by 1 to shift x column
+                    cols = _mm512_add_epi32(cols, one);         // shift col idx by 1 to shift x column
                     x_r = _mm512_i32gather_ps(cols, x, sizeof(Type));
                     t[z] = _mm512_fmadd_ps(vals, x_r, t[z]);
                 }
