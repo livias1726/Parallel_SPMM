@@ -9,7 +9,6 @@ int main(int argc, char** argv) {
     MM_typecode t;
     FILE *f;
     int k, m, n, nz, num_threads;
-    int* thread_rows;
     double flop, gflops_s, gflops_p;
     Type abs_err, rel_err;
     Type *x, *y_s, *y_p;
@@ -17,9 +16,9 @@ int main(int argc, char** argv) {
 
 #ifdef ELLPACK
     ELL *ell;
-    int* thread_maxnz;
 #else
     CSR *csr;
+    int* thread_rows;
 #endif
 
     // ------------------------------------------------ Set Up ------------------------------------------- //
@@ -73,15 +72,12 @@ int main(int argc, char** argv) {
 
     // ----------------------------------------------- OpenMP SpMM ---------------------------------------------- //
 
-    thread_rows = (int*) malloc((num_threads + 1) * sizeof(int));
-#ifdef ELLPACK
-    thread_maxnz = (int*) malloc(num_threads * sizeof(int));
-    malloc_handler(2, (void*[]){thread_rows, thread_maxnz});
-    ell_nz_balancing(ell, num_threads, thread_rows, thread_maxnz);
 
+#ifdef ELLPACK
     clock_gettime(CLOCK_MONOTONIC, &t1);
-    spmm_ell(ell, thread_rows, thread_maxnz, num_threads, x, k, y_p);
+    spmm_ell(ell, num_threads, x, k, y_p);
 #else
+    thread_rows = (int*) malloc((num_threads + 1) * sizeof(int));
     malloc_handler(1, (void*[]){thread_rows});
     csr_nz_balancing(num_threads, nz, csr->IRP, csr->M, thread_rows);
 
