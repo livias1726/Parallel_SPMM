@@ -72,8 +72,10 @@ int main(int argc, char** argv) {
 
     // ----------------------------------------------- OpenMP SpMM ---------------------------------------------- //
 
-
 #ifdef ELLPACK
+    for (int s = 0; s < num_threads; s++) printf("."); // TODO: why this print enormously speed omp product???
+    printf("\n");
+
     clock_gettime(CLOCK_MONOTONIC, &t1);
     spmm_ell(ell, num_threads, x, k, y_p);
 #else
@@ -106,7 +108,7 @@ int main(int argc, char** argv) {
 #ifdef ELLPACK
     clean_up(3, (void*[]){ell->AS, ell->JA, ell});
 #else
-    clean_up(5, (void*[]){csr->AS, csr->JA, csr->IRP, csr, rows_idx});
+    clean_up(5, (void*[]){csr->AS, csr->JA, csr->IRP, csr, thread_rows});
 #endif
 
     clean_up(3, (void*[]){x, y_s, y_p});
