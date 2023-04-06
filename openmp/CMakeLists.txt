@@ -16,6 +16,6 @@ endif()
 add_executable(omp_spmm omp_spmm.c ${UTILS_SRC})
 
 if (PERFORMANCE)
-    add_executable(omp_test omp_test.c)
+    add_executable(omp_test omp_test.c ../utils/test.c)
 endif ()
 

@@ -154,7 +154,7 @@ int main(int argc, char** argv) {
 
     // ---------------------------------------------- Results -------------------------------------------------- //
 #ifdef PERFORMANCE
-    fprintf(stdout, "%f %f %lf %lf", gflops_s, gflops_p, abs_err, rel_err);
+    fprintf(stdout, "%f %f %.2e %.2e", gflops_s, gflops_p, abs_err, rel_err);
 #else
     fprintf(stdout, "Serial GFLOPS: %f\n"
                     "Parallel GFLOPS: %f\n"

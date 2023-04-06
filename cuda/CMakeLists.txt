@@ -22,9 +22,10 @@ else()
     set(UTILS_SRC ${UTILS_SRC} cu_csr.cu)
 endif()
 
+add_executable(cu_spmm cu_spmm.cu ${UTILS_SRC})
+
 if(PERFORMANCE)
-    add_executable(cu_test cu_test.cu ${UTILS_SRC})
-else ()
-    add_executable(cu_spmm cu_spmm.cu ${UTILS_SRC})
-    set_property(TARGET cu_spmm PROPERTY CUDA_ARCHITECTURES 75)
+    add_executable(cu_test cu_test.c ../utils/test.c)
 endif()
+
+set_property(TARGET cu_spmm PROPERTY CUDA_ARCHITECTURES 75)

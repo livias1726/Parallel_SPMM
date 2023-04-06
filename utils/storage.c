@@ -20,14 +20,15 @@ void insert_in_row(Elem** arr, Elem* node, int idx) {
 }
 
 /**
- * Read the matrix from .mat files in coordinate format into an array of lists per row
+ * Read the matrix from .mtx file in coordinate format into an array of lists per row, to overcome
+ * the column-wise order in which it is represented in the file.
  *
  * @param f file descriptor
  * @param m number of rows
  * @param nz pointer to the number of non-zeros (to be eventually updated)
  * @param t matrix type code
  * */
-Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: check necessity to step through elems
+Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){
     int r, c, i, onz;
 
     // process the matrix size information
@@ -44,7 +45,7 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: c
         Elem* elem = (Elem*)malloc(sizeof(Elem));
         malloc_handler(1, (void* []) {elem});
 
-        if (mm_is_pattern(t)) {
+        if (mm_is_pattern(t)) { // matrix is of type pattern
             fscanf(f, "%d %d\n", &r, &c);
             elem->val = 1.0;
         } else {
@@ -68,7 +69,7 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: c
         elem->next = NULL;
         insert_in_row(elems, elem, --r);
 
-        if (mm_is_symmetric(t) && r != c) {
+        if (mm_is_symmetric(t) && r != c) {    // matrix is symmetric: re-build explicitly the upper triangle
             Elem* elem_s = (Elem*)malloc(sizeof(Elem));
             malloc_handler(1, (void* []) {elem});
 
@@ -85,7 +86,12 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){ //TODO: c
 }
 
 /**
- * Read the matrix into a CSR struct representing the matrix in CSR storage format
+ * Read the matrix into a CSR struct representing the matrix in CSR storage format.
+ *
+ * @param elems list of rows
+ * @param m     number of rows
+ * @param n     number of columns
+ * @param nz    number of non-zeros
  * */
 CSR* read_mm_csr(Elem** elems, int m, int n, int nz){
     int i, elem_count = 0;
@@ -96,13 +102,13 @@ CSR* read_mm_csr(Elem** elems, int m, int n, int nz){
 
     // scan the array of lists: 1 per row
     for (i = 0; i < m; i++){
+        // update rows pointers
+        mat->IRP[i] = elem_count;
+
         curr = elems[i];
 
         // skip empty rows
-        if (curr == NULL) { continue; }
-
-        // update rows pointers
-        mat->IRP[i] = elem_count;
+        if (curr == NULL) continue;
 
         // scan elements of i-th row and dealloc memory
         while (curr != NULL) {
@@ -112,7 +118,8 @@ CSR* read_mm_csr(Elem** elems, int m, int n, int nz){
             prev = curr;
             curr = curr->next;
             free(prev);
-            elem_count++;
+
+            ++elem_count;
         }
     }
 
@@ -123,29 +130,37 @@ CSR* read_mm_csr(Elem** elems, int m, int n, int nz){
 }
 
 /**
- * Read the matrix into a ELL struct representing the matrix in ELLPACK storage format
+ * Read the matrix into a ELL struct representing the matrix in ELLPACK storage format.
+ *
+ * @param elems list of rows
+ * @param m     number of rows
+ * @param n     number of columns
+ * @param nz    number of non-zeros
  * */
 ELL* read_mm_ell(Elem** elems, int m, int n, int nz){
-    int i, maxnz, count = 0;
+    int maxnz, r, idx, count = 0;
     Elem *curr, *prev;
 
     // alloc memory
     ELL* mat = alloc_ell(elems, m, n, nz, &maxnz);
 
     // scan the array of lists: 1 per row
-    for (i = 0; i < m; i++){
+    for (int i = 0; i < m; i++){
         curr = elems[i];
+        r = i * maxnz;
 
         // scan elements of i-th row and dealloc memory
         while (curr != NULL) {
-            mat->JA[i*maxnz + count] = curr->j;
-            mat->AS[i*maxnz + count] = curr->val;
+            idx = r + count;
+
+            mat->JA[idx] = curr->j;
+            mat->AS[idx] = curr->val;
 
             prev = curr;
             curr = curr->next;
             free(prev);
 
-            count++;
+            ++count;
         }
 
         count = 0;
@@ -174,28 +189,29 @@ CSR* alloc_csr(int m, int n, int nz){
 }
 
 ELL* alloc_ell(Elem** elems, int m, int n, int nz, int* maxnz){
+    int l_maxnz = 0;
+
     // retrieve maxnz
-    *maxnz = 0;
     for (int i = 0; i < m; i++) {
-        if ((elems[i] != NULL) && (*maxnz < elems[i]->nz)) {
-            *maxnz = elems[i]->nz;
-        }
+        if ((elems[i] != NULL) && (l_maxnz < elems[i]->nz)) l_maxnz = elems[i]->nz;
     }
 
     // alloc memory
     ELL* mat = (ELL*) malloc(sizeof(ELL));
     malloc_handler(1, (void* []) {mat});
+
     // calloc is used to avoid the addition of padding in a loop
-    // 2D arrays are treated as 1D arrays
-    mat->JA = calloc(m*(*maxnz), sizeof(int));
-    mat->AS = (Type*)calloc(m*(*maxnz), sizeof(Type));
+    int size = m * l_maxnz;
+    mat->JA = (int *)calloc(size, sizeof(int));
+    mat->AS = (Type *)calloc(size, sizeof(Type));
     malloc_handler(2, (void* []) {mat->JA, mat->AS});
 
     // populate ELLPACK format
     mat->M = m;
     mat->N = n;
     mat->NZ = nz;
-    mat->MAXNZ = *maxnz;
+    mat->MAXNZ = l_maxnz;
+    *maxnz = l_maxnz;
 
     return mat;
 }

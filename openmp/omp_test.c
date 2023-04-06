@@ -1,11 +1,7 @@
-#include <unistd.h>
-#include "../utils/headers/utils.h"
+#include "../utils/headers/test.h"
 
-#define NUM_RUNS 10
-#define NUM_K 7
 #define NUM_THREADS 40
-#define PATH "resources\\files\\"
-#define PROGRAM "cmake-build-debug/openmp/omp_spmm "
+#define PROGRAM "openmp/omp_spmm "
 
 int main(){
 
@@ -16,10 +12,11 @@ int main(){
 
     FILE *mat_file, *pipe, *out_file;
     int i, j, z;
-    double gflops_s = 0, gflops_p = 0, abs, rel;
-    char name[NAME_MAX], input[IO_MAX], output[IO_MAX], filepath[strlen(PATH) + NAME_MAX], num_threads[2], k_val[3];
+    double tmp_gfs, tmp_gfp, gflops_s = 0, gflops_p = 0, abs, rel;
+    char name[NAME_MAX], input[PATH_MAX], output[PATH_MAX], filepath[strlen(PATH) + NAME_MAX], num_threads[2], k_val[3];
     int ks[NUM_K] = {3, 4, 8, 12, 16, 32, 64};
     char* storage;
+
 #ifdef ELLPACK
     storage = "ELL";
 #else
@@ -29,7 +26,7 @@ int main(){
     unsigned ptr1 = strlen(PROGRAM), ptr2, ptr3;
 
     // get list of matrix names
-    if ((mat_file = fopen("matrices.txt", "r")) == NULL) {
+    if ((mat_file = fopen("resources/matrices.txt", "r")) == NULL) {
         fprintf(stderr, "Cannot open matrices file (Error: %d)\n", errno);
         exit(-1);
     }
@@ -91,9 +88,7 @@ int main(){
                 gflops_p = gflops_p / NUM_RUNS;
 
                 // save on csv
-                fprintf(out_file, "%s,%s,%d,%d,%f,%f,%.2e,%.2e\n", name, storage, ks[j], z, gflops_s, gflops_p, abs, rel);
-
-                sleep(1);
+                fprintf(out_file, "%s,%s,%d,%d,%f,%f,%.2e,%.2e\n", name, storage, ks[i], j, gflops_s, gflops_p, abs, rel);
             }
         }
 

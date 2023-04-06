@@ -78,13 +78,13 @@ __global__ void spmm_hll_kernel(int rows, const int* maxnz, const int* hack_offs
  * Y.
  *      The y dimension is set to be a factor of warpSize/blockDim.x,
  *      so that each block will have at least warpSize/blockDim.x rows
- *      to have a block dimension multiple of warpSize.
+ *      and the block dimension is a multiple of warpSize.
  *      This factor will be increased to reach the total number of rows or the maximum dimension of the block.
  *
  * NOTE: the logical configuration (x for the rows, y for the columns) causes uncoalesced accesses within the warp,
  *       since warps are indexed by threadIdx.x first. In that case, each thread in the warp will be responsible
  *       for a different row, accessing the Ellpack matrix by column. Meanwhile, with the inverted configuration,
- *       each earp will be responsible for a set of subsequent rows.
+ *       each warp will be responsible for a set of subsequent rows.
  * */
 dim3 get_block_dimensions(int m, int maxnz){
     // 2D BLOCKS
@@ -147,17 +147,19 @@ int get_maxnz(int rows, int cols, int rb, Type* as, int *mnz){
  * @param bdx           maximum number of rows per block
  * @param num_blocks    number of blocks to cover every row
  * */
-void get_hll(ELL* ell, HLL **hll, int bdx, int num_blocks){
+void get_hll(ELL* ell, HLL **hll, int rows_per_block, int num_blocks){
     int m = ell->M, maxnz = ell->MAXNZ;
 
     int *h_maxnz, *hack_offset, *h_ja;
     Type *h_as;
+
     // build HLL structure
     *hll = (HLL*) malloc(sizeof(HLL));
     h_maxnz = (int*) malloc(num_blocks * sizeof(int));
     hack_offset = (int*) malloc((num_blocks + 1) * sizeof(int));
 
-    int dim = get_maxnz(m, maxnz, bdx, ell->AS, h_maxnz);   // populate h_maxnz and get new dimension of JA and AS
+    // populate h_maxnz and get new dimension of JA and AS without extra padding
+    int dim = get_maxnz(m, maxnz, rows_per_block, ell->AS, h_maxnz);
     h_ja = (int*)calloc(dim, sizeof(int));
     h_as = (Type*)calloc(dim, sizeof(Type));
 
@@ -166,8 +168,8 @@ void get_hll(ELL* ell, HLL **hll, int bdx, int num_blocks){
     // for every row block re-populate new JA and AS excluding padding overhead
     for (int nb = 0; nb < num_blocks; nb++) {
         mnz = h_maxnz[nb];
-        rs = nb * bdx;
-        re = MIN(m, rs+bdx);
+        rs = nb * rows_per_block;
+        re = MIN(m, rs + rows_per_block);
 
         for (i = rs; i < re; i++) {
             for (j = 0; j < mnz; j++) {
@@ -179,7 +181,7 @@ void get_hll(ELL* ell, HLL **hll, int bdx, int num_blocks){
             }
         }
 
-        hack_offset[nb+1] = hack_offset[nb] + (bdx * mnz);  // populate hack offsets
+        hack_offset[nb+1] = hack_offset[nb] + (rows_per_block * mnz);  // populate hack offsets
     }
     hack_offset[num_blocks] = dim;
 

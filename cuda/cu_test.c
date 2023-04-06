@@ -1,10 +1,7 @@
-#include <unistd.h>
-#include "headers/cu_utils.cuh"
+#include <unistd.h> // sleep()
+#include "../utils/headers/test.h"
 
-#define NUM_RUNS 10
-#define NUM_K 7
-#define PATH "resources\\files\\"
-#define PROGRAM "cmake-build-debug/cuda/cu_spmm "
+#define PROGRAM "cuda/cu_spmm "
 
 int main(){
 
@@ -15,10 +12,11 @@ int main(){
 
     FILE *mat_file, *pipe, *out_file;
     int i, j;
-    double gflops_s = 0, gflops_p = 0, abs, rel;
-    char name[NAME_MAX], input[IO_MAX], output[IO_MAX], filepath[strlen(PATH) + NAME_MAX], k_val[3];
+    double tmp_gfs, tmp_gfp, gflops_s = 0, gflops_p = 0, abs, rel;
+    char name[NAME_MAX], input[PATH_MAX], output[PATH_MAX], filepath[strlen(PATH) + NAME_MAX], k_val[3];
     int ks[NUM_K] = {3, 4, 8, 12, 16, 32, 64};
     char* storage;
+
 #ifdef ELLPACK
     storage = "ELL";
 #else
@@ -28,7 +26,7 @@ int main(){
     unsigned ptr1 = strlen(PROGRAM), ptr2;
 
     // get list of matrix names
-    if ((mat_file = fopen("matrices.txt", "r")) == NULL) {
+    if ((mat_file = fopen("resources/matrices.txt", "r")) == NULL) {
         fprintf(stderr, "Cannot open matrices file (Error: %d)\n", errno);
         exit(-1);
     }
@@ -78,6 +76,8 @@ int main(){
                 tokenize_output(output, &tmp_gfs, &tmp_gfp, &abs, &rel);
                 gflops_s += tmp_gfs;
                 gflops_p += tmp_gfp;
+
+                sleep(1); // gets better performances
             }
 
             // retrieve average gflops
@@ -85,9 +85,7 @@ int main(){
             gflops_p = gflops_p / NUM_RUNS;
 
             // save on csv
-            fprintf(out_file, "%s,%s,%d,%f,%f,%.2e,%.2e\n", name, storage, ks[j], gflops_s, gflops_p, abs, rel);
-
-            sleep(1);
+            fprintf(out_file, "%s,%s,%d,%f,%f,%.2e,%.2e\n", name, storage, ks[i], gflops_s, gflops_p, abs, rel);
         }
 
         gflops_s = 0;
