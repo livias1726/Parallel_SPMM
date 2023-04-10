@@ -22,7 +22,6 @@ int main(int argc, char** argv) {
 #endif
 
     // ------------------------------------------------ Set Up ------------------------------------------- //
-
     // parse command line and input matrix
     process_arguments(argc, argv, &f, &k, &num_threads);
     process_mm(&t, f);
@@ -68,6 +67,7 @@ int main(int argc, char** argv) {
     serial_product_csr(csr, x, k, y_s);
 #endif
     clock_gettime(CLOCK_MONOTONIC, &t2);
+
     gflops_s = GET_GFLOPS(t1, t2, flop);
 
     // ----------------------------------------------- OpenMP SpMM ---------------------------------------------- //
@@ -79,8 +79,8 @@ int main(int argc, char** argv) {
     clock_gettime(CLOCK_MONOTONIC, &t1);
     spmm_ell(ell, num_threads, x, k, y_p);
 #else
-    thread_rows = (int*) malloc((num_threads + 1) * sizeof(int));
-    malloc_handler(1, (void*[]){thread_rows});
+    thread_rows = (int *) malloc((num_threads + 1) * sizeof(int));
+    malloc_handler(1, (void *[]) {thread_rows});
     csr_nz_balancing(num_threads, nz, csr->IRP, csr->M, thread_rows);
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
@@ -103,7 +103,6 @@ int main(int argc, char** argv) {
     print_matrix(y_s, m, k, "\nSerial Result:\n");
     print_matrix(y_p, m, k, "\nParallel Result:\n");
 #endif
-
     // ------------------------------------------- Clean up ------------------------------------------------- //
 #ifdef ELLPACK
     clean_up(3, (void*[]){ell->AS, ell->JA, ell});

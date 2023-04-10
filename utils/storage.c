@@ -102,6 +102,7 @@ CSR* read_mm_csr(Elem** elems, int m, int n, int nz){
 
     // scan the array of lists: 1 per row
     for (i = 0; i < m; i++){
+
         // update rows pointers
         mat->IRP[i] = elem_count;
 
@@ -202,6 +203,7 @@ ELL* alloc_ell(Elem** elems, int m, int n, int nz, int* maxnz){
 
     // calloc is used to avoid the addition of padding in a loop
     int size = m * l_maxnz;
+    printf("%d - %d - %d\n", m, l_maxnz, size);
     mat->JA = (int *)calloc(size, sizeof(int));
     mat->AS = (Type *)calloc(size, sizeof(Type));
     malloc_handler(2, (void* []) {mat->JA, mat->AS});
