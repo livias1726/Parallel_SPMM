@@ -19,7 +19,7 @@
 #define MAX(a,b) (a > b ? a : b)
 #define MIN(a,b) (a < b ? a : b)
 
-#define INT_LOAD_BALANCE(idx, tot, num) (((idx + 1) * tot) / num) - ((idx * tot) / num)
+#define INT_LOAD_BALANCE(idx, tot, num) ((((idx + 1) * tot) / num) - ((idx * tot) / num))
 
 typedef double Type;
 
@@ -69,7 +69,6 @@ typedef struct csr {
  * @param JA 2D array of non-zeros col indices
  * @param AS 2D array of non-zero values
  * */
- // TODO: try add ell_metadata with array of maxnz per row and number of nz
 typedef struct ell {
     int M;
     int N;
@@ -86,6 +85,10 @@ void save_result(char*, Type*, int, int);
 void print_matrix(Type*, int, int, char*);
 void print_csr(CSR*);
 void print_ell(ELL*);
+void save_csr(CSR*, char*);
+CSR* read_csr(char*);
+void save_ell(ELL*, char*);
+ELL* read_ell(char*);
 
 // serial
 void serial_product_csr(CSR*, const Type*, int, Type*);
@@ -94,9 +97,10 @@ void serial_product_ell(ELL*, const Type*, int, Type*);
 // storage
 Elem** read_mm(FILE*, int*, int*, int*, const MM_typecode);
 CSR* read_mm_csr(Elem**, int, int, int);
-ELL* read_mm_ell(Elem**, int, int, int);
 CSR* alloc_csr(int, int, int);
-ELL* alloc_ell(Elem**, int, int, int, int*);
+
+ELL* read_mm_ell(Elem**, int, int, int);
+ELL* alloc_ell(int, int, int, int);
 
 // utils
 void alloc_struct(Type**, int, int);

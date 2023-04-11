@@ -84,3 +84,104 @@ void print_ell(ELL* ell) {
         fprintf(stdout, "\n\t");
     }
 }
+
+// TODO ------------------------------------------- Added for testing -------------------------------------------------
+void save_csr(CSR* csr, char* name){
+    int i, j;
+
+    // create file path
+    name[strlen(name) - 4] = 0;
+
+    char path[PATH_MAX];
+    snprintf(path, PATH_MAX, "resources/tmp/%s_csr.txt", name);
+
+    int m = csr->M, n = csr->N, nz = csr->NZ;
+    int *ja = csr->JA, *irp = csr->IRP;
+    Type *as = csr->AS;
+
+    FILE *f = fopen(path, "w");
+
+    // first row for m, n, nz
+    fprintf(f, "%d %d %d\n", m, n, nz);
+
+    for (i = 0; i < m; i++){
+        for (j = irp[i]; j < irp[i+1]; j++) {
+            fprintf(f, "%d %d %20.19g\n", i, ja[j], as[j]);
+        }
+    }
+    fclose(f);
+}
+
+CSR* read_csr(char* name){
+    // create file path
+    name[strlen(name) - 4] = 0;
+    char path[PATH_MAX];
+    snprintf(path, PATH_MAX, "resources/tmp/%s_csr.txt", name);
+
+    int m, n, nz;
+    FILE *f = fopen(path, "r");
+    fscanf(f, "%d %d %d\n", &m, &n, &nz);
+    CSR* csr = alloc_csr(m, n, nz);
+
+    int row_ctr = 0, i, row_prev = 0, row;
+    csr->IRP[0] = 0;
+    for(i = 0; i < nz; i++){
+        fscanf(f, "%d %d %lg\n", &row, &csr->JA[i], &csr->AS[i]);
+
+        if (row != row_prev) {
+            row_prev = row;
+            csr->IRP[++row_ctr] = i;
+        }
+    }
+    fclose(f);
+
+    return csr;
+}
+
+void save_ell(ELL* ell, char* name) {
+    int i, j;
+
+    // create file path
+    name[strlen(name) - 4] = 0;
+
+    char path[PATH_MAX];
+    snprintf(path, PATH_MAX, "resources/tmp/%s_ell.txt", name);
+
+    int m = ell->M, n = ell->N, nz = ell->NZ, maxnz = ell->MAXNZ;
+    int *ja = ell->JA;
+    Type *as = ell->AS;
+
+    FILE *f = fopen(path, "w");
+
+    // first row for m, n, nz
+    fprintf(f, "%d %d %d %d\n", m, n, nz, maxnz);
+
+    int row;
+    for (i = 0; i < m; i++){
+        row = i * maxnz;
+        for (j = 0; j < maxnz; j++) {
+            fprintf(f, "%d %d %20.19g\n", i, ja[row + j], as[row + j]);
+        }
+    }
+    fclose(f);
+}
+
+ELL* read_ell(char* name){
+    // create file path
+    name[strlen(name) - 4] = 0;
+    char path[PATH_MAX];
+    snprintf(path, PATH_MAX, "resources/tmp/%s_ell.txt", name);
+
+    int m, n, nz, maxnz;
+    FILE *f = fopen(path, "r");
+    fscanf(f, "%d %d %d %d\n", &m, &n, &nz, &maxnz);
+    ELL* ell = alloc_ell(m, n, nz, maxnz);
+
+    int row;
+    for (int i = 0; i < m * maxnz; i++){
+        fscanf(f, "%d %d %lg\n", &row, &ell->JA[i], &ell->AS[i]);
+    }
+    fclose(f);
+
+    return ell;
+}

@@ -56,8 +56,6 @@ int main(int argc, char** argv) {
     print_matrix(x, n, k, "\nMultivector:\n");
 #endif
 
-    alloc_cuda_spmm(&d_x, &d_y, x, m, n, k);
-
     // convert to wanted storage format
 #ifdef ELLPACK
     ell = read_mm_ell(elems, m, n, nz);
@@ -88,6 +86,7 @@ int main(int argc, char** argv) {
 
     // to avoid bank conflicts when double values are used
     if (sizeof(Type) == 8) checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
+    alloc_cuda_spmm(&d_x, &d_y, x, m, n, k);
 
 #ifdef ELLPACK
     compute_hll_dimensions(ell, k, &hll, &BLOCK_DIM, &GRID_DIM, &shared_mem);
@@ -112,6 +111,7 @@ int main(int argc, char** argv) {
     timer->stop();
 
     gflops_p = (double)flop/((timer->getTime())*1.e6);
+
     checkCudaErrors(cudaMemcpy(y_p, d_y, m * k * sizeof(Type), cudaMemcpyDeviceToHost));
 
     // check results
@@ -150,7 +150,7 @@ int main(int argc, char** argv) {
     delete[] y_s;
     delete[] y_p;
 
-    cudaDeviceReset();
+    checkCudaErrors(cudaDeviceReset());
 
     // ---------------------------------------------- Results -------------------------------------------------- //
 #ifdef PERFORMANCE

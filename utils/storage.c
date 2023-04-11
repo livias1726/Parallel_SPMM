@@ -130,6 +130,18 @@ CSR* read_mm_csr(Elem** elems, int m, int n, int nz){
     return mat;
 }
 
+/* Get MAXNZ from the thread's hack */
+int get_maxnz(Elem** elems, int start, int end){
+    int maxnz = 0;
+
+    while ((start < end) && (elems[start] != NULL)) {
+        maxnz = MAX(maxnz, elems[start]->nz);
+        ++start;
+    }
+
+    return maxnz;
+}
+
 /**
  * Read the matrix into a ELL struct representing the matrix in ELLPACK storage format.
  *
@@ -143,7 +155,8 @@ ELL* read_mm_ell(Elem** elems, int m, int n, int nz){
     Elem *curr, *prev;
 
     // alloc memory
-    ELL* mat = alloc_ell(elems, m, n, nz, &maxnz);
+    maxnz = get_maxnz(elems, 0, m);
+    ELL* mat = alloc_ell(m, n, nz, maxnz);
 
     // scan the array of lists: 1 per row
     for (int i = 0; i < m; i++){
@@ -189,21 +202,13 @@ CSR* alloc_csr(int m, int n, int nz){
     return mat;
 }
 
-ELL* alloc_ell(Elem** elems, int m, int n, int nz, int* maxnz){
-    int l_maxnz = 0;
-
-    // retrieve maxnz
-    for (int i = 0; i < m; i++) {
-        if ((elems[i] != NULL) && (l_maxnz < elems[i]->nz)) l_maxnz = elems[i]->nz;
-    }
-
+ELL* alloc_ell(int m, int n, int nz, int maxnz){
     // alloc memory
     ELL* mat = (ELL*) malloc(sizeof(ELL));
     malloc_handler(1, (void* []) {mat});
 
     // calloc is used to avoid the addition of padding in a loop
-    int size = m * l_maxnz;
-    printf("%d - %d - %d\n", m, l_maxnz, size);
+    int size = m * maxnz;
     mat->JA = (int *)calloc(size, sizeof(int));
     mat->AS = (Type *)calloc(size, sizeof(Type));
     malloc_handler(2, (void* []) {mat->JA, mat->AS});
@@ -212,8 +217,7 @@ ELL* alloc_ell(Elem** elems, int m, int n, int nz, int* maxnz){
     mat->M = m;
     mat->N = n;
     mat->NZ = nz;
-    mat->MAXNZ = l_maxnz;
-    *maxnz = l_maxnz;
+    mat->MAXNZ = maxnz;
 
     return mat;
 }
