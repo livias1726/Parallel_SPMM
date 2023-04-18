@@ -21,14 +21,17 @@ void process_arguments(int argc, char** argv, FILE **f, int* k){
     *k = (int)strtol(argv[2], NULL, 10);
 }
 
-void alloc_cuda_spmm(Type **d_x, Type **d_y, const Type *x, int m, int n, int k){
+int alloc_cuda_spmm(Type **d_x, Type **d_y, const Type *x, int m, int n, int k){
 
     int size_partial = k * sizeof(Type);
     int size_x = n * size_partial;
+    int size_y = m * size_partial;
 
     checkCudaErrors(cudaMalloc((void**) d_x, size_x));
-    checkCudaErrors(cudaMemcpy(*d_x, x,  size_x, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMalloc((void**) d_y, size_y));
 
-    checkCudaErrors(cudaMalloc((void**) d_y, (m*size_partial)));
+    checkCudaErrors(cudaMemcpy(*d_x, x, size_x, cudaMemcpyHostToDevice));
+    
+    return size_x + size_y;
 }
 

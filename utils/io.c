@@ -50,20 +50,20 @@ void print_csr(CSR* csr){
 
     fprintf(stdout, "CSR:\n");
     fprintf(stdout, "\tM: %d, N: %d, NZ: %d\n", m, n, nz);
-    fprintf(stdout, "\tRow pointers: [");
+    //fprintf(stdout, "\tRow pointers: [");
 
     int i;
+    /*
     for (i = 0; i < m; i++) {
         fprintf(stdout, "%d, ", irp[i]);
     }
     fprintf(stdout, "%d]\n", irp[m]);
+     */
 
     fprintf(stdout, "Value (Column):\n");
-    for (i = 0; i < nz-1; i++) {
-        fprintf(stdout, "\t%.16g (%d)", as[i], ja[i]);
-        if (i%3 == 2) fprintf(stdout, "\n");
+    for (i = 0; i < 10; i++) {
+        fprintf(stdout, "\t%20.19g (%d)\n", as[i], ja[i]);
     }
-    fprintf(stdout, "\t%.16g (%d)\n", as[nz-1], ja[nz-1]);
 }
 
 void print_ell(ELL* ell) {

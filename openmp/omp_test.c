@@ -3,6 +3,25 @@
 #define NUM_THREADS 40
 #define PROGRAM "openmp/omp_spmm "
 
+void tokenize_output_omp (char* output, float* gs, float* gp, Type* ae, Type* re) {
+    char* tok = strtok(output, " ");
+    char* tokens[4];
+    int count = -1;
+
+    while (tok != NULL && count < 4) {
+        count++;
+        tokens[count] = tok;
+        tok = strtok(NULL, " ");
+    }
+
+    if (count == 3) {
+        *gs = strtod(tokens[0], NULL);
+        *gp = strtod(tokens[1], NULL);
+        *ae = strtod(tokens[2], NULL);
+        *re = strtod(tokens[3], NULL);
+    }
+}
+
 int main(){
 
 #ifndef PERFORMANCE
@@ -12,9 +31,10 @@ int main(){
 
     FILE *mat_file, *pipe, *out_file;
     int i, j, z;
-    double tmp_gfs, tmp_gfp, gflops_s = 0, gflops_p = 0, abs, rel;
+    float tmp_gfs, tmp_gfp, gflops_s = 0, gflops_p = 0, bw;
+    Type abs, rel;
     char name[NAME_MAX], input[PATH_MAX], output[PATH_MAX], filepath[strlen(PATH) + NAME_MAX], num_threads[2], k_val[3];
-    int ks[NUM_K] = {3, 4, 8, 12, 16, 32, 64};
+    int ks[NUM_K] = {/*3, 4, 8,*/ 12, 16, 32, 64};
     char* storage;
 
 #ifdef ELLPACK
@@ -78,7 +98,7 @@ int main(){
                         exit(-1);
                     }
 
-                    tokenize_output(output, &tmp_gfs, &tmp_gfp, &abs, &rel);
+                    tokenize_output_omp(output, &tmp_gfs, &tmp_gfp, &abs, &rel);
                     gflops_s += tmp_gfs;
                     gflops_p += tmp_gfp;
                 }

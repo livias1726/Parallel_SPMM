@@ -47,7 +47,7 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){
 
         if (mm_is_pattern(t)) { // matrix is of type pattern
             fscanf(f, "%d %d\n", &r, &c);
-            elem->val = 1.0;
+            elem->val = 1;
         } else {
             if (sizeof(Type) == 8) {
                 fscanf(f, "%d %d %lf\n", &r, &c, &(elem->val));
@@ -56,13 +56,13 @@ Elem** read_mm(FILE* f, int* m, int* n, int* nz, const MM_typecode t){
             }
 
             // some matrices still have zero values in their representation: this condition avoids
-#ifdef ELLPACK
+//#ifdef ELLPACK
             if (elem->val == 0) {
                 free(elem);
                 *nz -= 1;
                 continue;
             }
-#endif
+//#endif
         }
 
         elem->j = --c;

@@ -16,8 +16,8 @@ void spmm_csr_64(CSR *mat, const int* rows_load, int threads, const Type* x, int
     int *irp = mat->IRP, *ja = mat->JA, m = mat->M;
     Type *as = mat->AS;
 
-    const __m256i scale = _MM8(k);
-    const __m256i one = _MM8(1);
+    const __m256i scale = MM8(k);
+    const __m256i one = MM8(1);
 
     if (m < threads) threads = m - 1;
 
@@ -94,8 +94,8 @@ void spmm_csr_32(CSR *mat, const int* rows_load, int threads, const Type* x, int
     int *irp = mat->IRP, *ja = mat->JA, m = mat->M;
     Type *as = mat->AS;
 
-    const __m512i scale = _MM16(k);
-    const __m512i one = _MM16(1);
+    const __m512i scale = MM16(k);
+    const __m512i one = MM16(1);
 
     if (m < threads) threads = m - 1;
 
@@ -172,12 +172,8 @@ void spmm_csr(CSR *mat, const int* rows_load, int threads, const Type* x, int k,
 void csr_nz_balancing(int threads, int tot_nz, const int* irp, int tot_rows, int* rows_idx){
     int j, nz, nz_prev, nz_curr;
 
-    if (tot_rows < threads) threads = tot_rows - 1;
-
     rows_idx[0] = 0;
     for (int i = 1; i < threads; i++) {
-        printf("."); // TODO: why this print enormously speed omp product???
-
         // compute the number of non-zeros to assign the i-th thread
         nz = INT_LOAD_BALANCE(i, tot_nz, threads);
 
@@ -196,5 +192,20 @@ void csr_nz_balancing(int threads, int tot_nz, const int* irp, int tot_rows, int
     }
 
     rows_idx[threads] = tot_rows; // last thread gets the remaining rows
-    printf("\n");
+}
+
+// parallel initialization of y, to distribute y rows according to the load balancing
+void csr_init_struct(Type* y, int* thread_rows, int num_threads, int k){
+#pragma omp parallel num_threads(num_threads)
+    {
+        int tid = omp_get_thread_num();
+        int i, z, row;
+
+        for (i = thread_rows[tid]; i < thread_rows[tid+1]; i++) {
+            row = i * k;
+            for (z = 0; z < k; z++) {
+                y[row + z] = 0;
+            }
+        }
+    }
 }

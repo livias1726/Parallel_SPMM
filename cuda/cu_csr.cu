@@ -48,7 +48,7 @@ __device__ void spmm_csr_vector_large(const int *irp, const int *ja, const Type 
             tid_k = (z * warpSize) + tid_w;   // column of x each thread will read
 
             if (tid_k < k) {
-                tmp = 0.0;
+                tmp = 0;
                 for (j = irp[i]; j < irp[i+1]; j++) {
                     // whole warp takes the same non-zero and each thread takes the specific value of x
                     tmp += as[j] * x[ja[j] * k + tid_k];
@@ -106,12 +106,14 @@ __device__ void spmm_csr_vector_small(const int *irp, const int *ja, const Type 
                 LDS[tid_b] += as[j] * x[ja[j] * k + tid_sw];
             }
         }
+        __syncwarp();
 
         /*
          * REDUCTION 1: values of sub-warps not involved in the warp reduction phase are accumulated
          * in parallel by the other sub-warps.
          * */
         if (swid < excluded) LDS[tid_b] += LDS[tid_b + s];
+        __syncwarp();
 
         // REDUCTION 2
         if (swid < first_pot) LDS[tid_b] = sub_reduce(mask, s>>1, k, LDS[tid_b]);
@@ -208,7 +210,7 @@ void compute_csr_dimensions(CSR* csr, int k, int* blocks, int *num_blocks, dim3*
     *GRID_DIM = dim3(nb-1);
 }
 
-void alloc_cuda_csr(CSR* csr, int* blocks, int num_blocks, int **d_irp, int **d_ja, Type **d_as, int **d_blocks){
+int alloc_cuda_csr(CSR* csr, int* blocks, int num_blocks, int **d_irp, int **d_ja, Type **d_as, int **d_blocks){
     int m = csr->M, nz = csr->NZ;
     int *irp = csr->IRP, *ja = csr->JA;
     Type *as = csr->AS;
@@ -227,4 +229,6 @@ void alloc_cuda_csr(CSR* csr, int* blocks, int num_blocks, int **d_irp, int **d_
     checkCudaErrors(cudaMemcpy(*d_ja, ja, size_ja, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(*d_as, as, size_as, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(*d_blocks, blocks, size_blocks, cudaMemcpyHostToDevice));
+
+    return size_irp + size_ja + size_as + size_blocks;
 }

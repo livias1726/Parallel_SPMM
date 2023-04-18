@@ -12,7 +12,11 @@ int main(){
 
     FILE *mat_file, *pipe, *out_file;
     int i, j;
-    double tmp_gfs, tmp_gfp, gflops_s = 0, gflops_p = 0, abs, rel;
+
+    float tmp_gfs, tmp_gfp, tmp_bw;
+    float gflops_s = 0, gflops_p = 0, bw = 0;
+    Type abs, rel;
+
     char name[NAME_MAX], input[PATH_MAX], output[PATH_MAX], filepath[strlen(PATH) + NAME_MAX], k_val[3];
     int ks[NUM_K] = {3, 4, 8, 12, 16, 32, 64};
     char* storage;
@@ -38,7 +42,7 @@ int main(){
         fprintf(stderr, "Cannot open output file\n");
         exit(-1);
     }
-    fprintf(out_file, "Matrix,Storage Format,K,Serial GFLOPS,Parallel GFLOPS,Absolute Err,Relative Err\n"); //header
+    fprintf(out_file, "Matrix,Storage Format,K,Serial GFLOPS,Parallel GFLOPS,Absolute Err,Relative Err,GB/s\n"); //header
 
     // run
     while (fgets(name, NAME_MAX, mat_file)) {
@@ -73,23 +77,26 @@ int main(){
                     exit(-1);
                 }
 
-                tokenize_output(output, &tmp_gfs, &tmp_gfp, &abs, &rel);
+                tokenize_output(output, &tmp_gfs, &tmp_gfp, &abs, &rel, &tmp_bw);
                 gflops_s += tmp_gfs;
                 gflops_p += tmp_gfp;
+                bw += tmp_bw;
 
-                sleep(1); // gets better performances
+                sleep(1);
             }
 
             // retrieve average gflops
-            gflops_s = gflops_s / NUM_RUNS;
-            gflops_p = gflops_p / NUM_RUNS;
+            gflops_s /= NUM_RUNS;
+            gflops_p /= NUM_RUNS;
+            bw /= NUM_RUNS;
 
             // save on csv
-            fprintf(out_file, "%s,%s,%d,%f,%f,%.2e,%.2e\n", name, storage, ks[i], gflops_s, gflops_p, abs, rel);
+            fprintf(out_file, "%s,%s,%d,%f,%f,%.2e,%.2e,%f\n", name, storage, ks[i], gflops_s, gflops_p, abs, rel, bw);
         }
 
         gflops_s = 0;
         gflops_p = 0;
+        bw = 0;
     }
 
     fclose(mat_file);

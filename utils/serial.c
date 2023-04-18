@@ -15,6 +15,8 @@ void serial_product_csr(CSR* mat, const Type* x, int k, Type* y){
     int ry, rx, j, z;
     Type val;
 
+    memset(y, 0, m * k * sizeof(Type));
+
     for (int i = 0; i < m; i++) {
         ry = i*k;
 
@@ -43,6 +45,9 @@ void serial_product_ell(ELL* mat, const Type* x, int k, Type* y){
 
     int ra, rx, ry, j, z, idx;
     Type val;
+
+    memset(y, 0, m * k * sizeof(Type));
+
     for (int i = 0; i < m; i++) {
         ra = i*maxnz;
         ry = i*k;

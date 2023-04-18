@@ -1,6 +1,6 @@
 #include "headers/omp_ell.h"
 
-void spmm_ell_stream(int start, int end, int *ja, Type *as, Type* x, int k, Type* y){
+void spmm_ell_stream(int start, int end, const int *ja, const Type *as, Type* x, int k, Type* y){
 
     int z;
     Type val, *x_r;
@@ -17,14 +17,19 @@ void spmm_ell_stream(int start, int end, int *ja, Type *as, Type* x, int k, Type
     }
 }
 
-void spmm_ell_vector_64(int *ja, Type *as, int start, int end, Type* x, int k, __m512d* t, Type* y) {
+void spmm_ell_vector_64(int *ja, Type *as, int start, int end, Type* x, int k, Type* y) {
 
     int z;
     __m256i cols;
     __m512d vals, x_r;
 
-    const __m256i scale = _MM8(k);
-    const __m256i one = _MM8(1);
+    const __m256i scale = MM8(k);
+    const __m256i one = MM8(1);
+
+    __m512d t[k];
+#pragma ivdep
+#pragma omp unroll partial
+    for (z = 0; z < k; z++) t[z] = _mm512_setzero_pd(); // init t vector
 
     #pragma ivdep
     #pragma omp unroll partial
@@ -52,57 +57,19 @@ void spmm_ell_vector_64(int *ja, Type *as, int start, int end, Type* x, int k, _
     }
 }
 
-/**
- * Computes the product with A stored in a ELL format
- *
- * @param mat matrix in ellpack format
- * @param threads number of threads to spawn
- * @param x multivector Nxk stored as 1D array
- * @param k number of columns of x
- * @param y receives product results Mxk stored as 1D array
- * */
-void spmm_ell_64(ELL* mat, int threads, Type* x, int k, Type* y) {
-
-    int maxnz = mat->MAXNZ, rows = mat->M, *ja = mat->JA;
-    Type *as = mat->AS;
-
-    int vector = maxnz / PD_STRIDE;
-    int j = PD_STRIDE * vector;
-    int remainder = maxnz % PD_STRIDE;
-
-    int start, end, r_y;
-
-    __m512d t[k];
-    #pragma ivdep
-    #pragma omp unroll partial
-    for (int z = 0; z < k; z++) t[z] = _mm512_setzero_pd(); // init t vector
-
-#pragma omp parallel for num_threads(threads) private(start, end, r_y, t) \
-                             shared(j, maxnz, rows, ja, as, k, x, y, vector, remainder) default(none)
-    for (int i = 0; i < rows; ++i) { // thread takes the row
-        start = i * maxnz;
-        end = start + j;
-        r_y = i * k;
-
-        if (vector) {
-            // the row can be vectorized at least once (maxnz > PD_STRIDE)
-            spmm_ell_vector_64(ja, as, start, end, x, k, t, &y[r_y]);
-            // there are remaining non-zeros that are not padding
-            if (remainder && as[end]) spmm_ell_stream(end, start + maxnz, ja, as, x, k, &y[r_y]);
-        } else {
-            spmm_ell_stream(end, start + maxnz, ja, as, x, k, &y[r_y]);
-        }
-    }
-}
-
-void spmm_ell_vector_32(int *ja, Type *as, int start, int end, Type* x, int k, __m512* t, Type* y) {
+void spmm_ell_vector_32(int *ja, Type *as, int start, int end, Type* x, int k, Type* y) {
 
     int z;
     __m512i cols;
     __m512 vals, x_r;
 
-    const __m512i scale = _MM16(k);
-    const __m512i one = _MM16(1);
+    const __m512i scale = MM16(k);
+    const __m512i one = MM16(1);
+
+    __m512 t[k];
+#pragma ivdep
+#pragma omp unroll partial
+    for (z = 0; z < k; z++) t[z] = _mm512_setzero_ps(); // init t vector
 
     #pragma ivdep
     #pragma omp unroll partial
@@ -139,44 +106,40 @@ void spmm_ell_vector_32(int *ja, Type *as, int start, int end, Type* x, int k, _
  * @param k number of columns of x
  * @param y receives product results Mxk stored as 1D array
  * */
-void spmm_ell_32(ELL* mat, int threads, Type* x, int k, Type* y) {
+void spmm_ell(ELL* mat, int threads, Type* x, int k, Type* y) {
 
     int maxnz = mat->MAXNZ, rows = mat->M, *ja = mat->JA;
     Type *as = mat->AS;
 
-    int vector = maxnz / PS_STRIDE;
-    int j = PS_STRIDE * vector;
-    int remainder = maxnz % PS_STRIDE;
+    int stride = STRIDE;
+
+    int vector = maxnz / stride;
+    int j = stride * vector;
+    int remainder = maxnz % stride;
 
     int start, end, r_y;
 
-    __m512 t[k];
-    #pragma ivdep
-    #pragma omp unroll partial
-    for (int z = 0; z < k; z++) t[z] = _mm512_setzero_ps(); // init t vector
-
-#pragma omp parallel for num_threads(threads) private(start, end, r_y, t) \
+#pragma omp parallel for num_threads(threads) private(start, end, r_y) \
                              shared(j, maxnz, rows, ja, as, k, x, y, vector, remainder) default(none)
     for (int i = 0; i < rows; ++i) { // thread takes the row
         start = i * maxnz;
         end = start + j;
         r_y = i * k;
 
-        if (vector) {
-            // the row can be vectorized at least once (maxnz > PD_STRIDE)
-            spmm_ell_vector_32(ja, as, start, end, x, k, t, &y[r_y]);
-            // there are remaining non-zeros that are not padding
-            if (remainder && as[end]) spmm_ell_stream(end, start + maxnz, ja, as, x, k, &y[r_y]);
+        memset(&y[r_y], 0, k * sizeof(Type));
+
+        if (vector) { // the row can be vectorized at least once
+            if (sizeof(Type) == 8) {
+                spmm_ell_vector_64(ja, as, start, end, x, k, &y[r_y]);
+            } else {
+                spmm_ell_vector_32(ja, as, start, end, x, k, &y[r_y]);
+            }
+
+            if (remainder && as[end]) { // there are remaining non-zeros that are not padding
+                spmm_ell_stream(end, start + maxnz, ja, as, x, k, &y[r_y]);
+            }
         } else {
             spmm_ell_stream(end, start + maxnz, ja, as, x, k, &y[r_y]);
         }
-    }
-}
-
-void spmm_ell(ELL* mat, int threads, Type* x, int k, Type* y) {
-    if (sizeof(Type) == 8) {
-        spmm_ell_64(mat, threads, x, k, y);
-    } else {
-        spmm_ell_32(mat, threads, x, k, y);
     }
 }

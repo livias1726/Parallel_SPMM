@@ -239,7 +239,7 @@ void compute_hll_dimensions(ELL* ell, int k, HLL **hll, dim3* BLOCK_DIM, dim3* G
  * @param d_ja          the array of column indices (ELL format)
  * @param d_as          the array of nz values (ELL format)
  * */
-void alloc_cuda_hll(HLL* hll, int num_blocks, int **d_maxnz, int **d_hack, int **d_ja, Type **d_as){
+int alloc_cuda_hll(HLL* hll, int num_blocks, int **d_maxnz, int **d_hack, int **d_ja, Type **d_as){
     int *maxnz = hll->MAXNZ, *ja = hll->JA, *hack = hll->HACK_OFFSET;
     Type *as = hll->AS;
 
@@ -261,6 +261,8 @@ void alloc_cuda_hll(HLL* hll, int num_blocks, int **d_maxnz, int **d_hack, int *
     checkCudaErrors(cudaMemcpy(*d_hack, hack, size, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(*d_ja, ja, size_ja, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(*d_as, as, size_as, cudaMemcpyHostToDevice));
+
+    return size + size + size_ja + size_as;
 }
 
 void print_hll(HLL* hll, int num_blocks){

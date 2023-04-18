@@ -12,7 +12,6 @@
     #define SCPA_PROJECT_UTILS_H
 #endif
 
-#define GET_GFLOPS(t1, t2, flop) ( flop / ((t2.tv_sec - t1.tv_sec) * 1.e9 + (t2.tv_nsec - t1.tv_nsec)) )
 #define ROUND_UP(a,b) ((a+b-1)/b)
 #define ROUND_UP_MULT(a, b) (ROUND_UP(a,b) * b)
 
