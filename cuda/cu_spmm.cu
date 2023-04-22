@@ -15,7 +15,8 @@ int main(int argc, char** argv) {
     int *d_ja;
 
     // performance
-    float flop, gflops_s, gflops_p, bytes, bw;
+    unsigned int bytes;
+    float flop, gflops_s, gflops_p, bw;
     Type abs_err, rel_err;
     StopWatchInterface *timer = 0;
 
@@ -118,6 +119,7 @@ int main(int argc, char** argv) {
     checkCudaErrors(cudaMemcpy(y_p, d_y, m * k * sizeof(Type), cudaMemcpyDeviceToHost));
     timer->stop();
 
+    printf("%d\n", bytes);
     bw = (float)bytes/((timer->getTime())*1.e6);
 
     // -------------------------------------------- check errors ---------------------------------------------------- //

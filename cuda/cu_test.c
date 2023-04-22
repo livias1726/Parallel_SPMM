@@ -1,7 +1,28 @@
-#include <unistd.h> // sleep()
+#include <unistd.h>
 #include "../utils/headers/test.h"
 
-#define PROGRAM "cuda/cu_spmm "
+#define PROGRAM "cuda/cu_spmm"
+#define HEADER "Matrix,Storage Format,K,Serial GFLOPS,Parallel GFLOPS,Absolute Err,Relative Err,GB/s\n"
+
+void tokenize_output_cuda (char* output, float* gs, float* gp, Type* ae, Type* re, float* mb) {
+    char* tok = strtok(output, " ");
+    char* tokens[5];
+    int count = -1;
+
+    while (tok != NULL && count < 5) {
+        count++;
+        tokens[count] = tok;
+        tok = strtok(NULL, " ");
+    }
+
+    if (count == 4) {
+        *gs = strtof(tokens[0], NULL);
+        *gp = strtof(tokens[1], NULL);
+        *ae = strtof(tokens[2], NULL);
+        *re = strtof(tokens[3], NULL);
+        *mb = strtof(tokens[4], NULL);
+    }
+}
 
 int main(){
 
@@ -12,12 +33,9 @@ int main(){
 
     FILE *mat_file, *pipe, *out_file;
     int i, j;
-
-    float tmp_gfs, tmp_gfp, tmp_bw;
-    float gflops_s = 0, gflops_p = 0, bw = 0;
+    float tmp_gfs, tmp_gfp, tmp_bw, gflops_s = 0, gflops_p = 0, bw = 0;
     Type abs, rel;
-
-    char name[NAME_MAX], input[PATH_MAX], output[PATH_MAX], filepath[strlen(PATH) + NAME_MAX], k_val[3];
+    char name[NAME_MAX], input[PATH_MAX], output[PATH_MAX], out_filepath[PATH_MAX];
     int ks[NUM_K] = {3, 4, 8, 12, 16, 32, 64};
     char* storage;
 
@@ -27,39 +45,31 @@ int main(){
     storage = "CSR";
 #endif
 
-    unsigned ptr1 = strlen(PROGRAM), ptr2;
+    for (i = 0; i < NUM_K; i++) { // add k value to input
+        //create csv for k and num_threads
+        sprintf(out_filepath, "perf/perf_cuda_%s_%d.csv", storage, ks[i]);
+        if ((out_file = fopen(out_filepath, "w+")) == NULL) {
+            fprintf(stderr, "Cannot open output file\n");
+            exit(-1);
+        }
+        fprintf(out_file, HEADER);
 
-    // get list of matrix names
-    if ((mat_file = fopen("resources/matrices.txt", "r")) == NULL) {
-        fprintf(stderr, "Cannot open matrices file (Error: %d)\n", errno);
-        exit(-1);
-    }
-    strcpy(filepath, PATH); // initialize first half of filepath
-    strcpy(input, PROGRAM); // add program name to input
+        // get list of matrix names
+        if ((mat_file = fopen("resources/matrices.txt", "r")) == NULL) {
+            fprintf(stderr, "Cannot open matrices file (Error: %d)\n", errno);
+            exit(-1);
+        }
 
-    //create csv for results
-    if ((out_file = fopen("perf_cuda.csv", "w+")) == NULL) {
-        fprintf(stderr, "Cannot open output file\n");
-        exit(-1);
-    }
-    fprintf(out_file, "Matrix,Storage Format,K,Serial GFLOPS,Parallel GFLOPS,Absolute Err,Relative Err,GB/s\n"); //header
+        // run
+        while (fgets(name, NAME_MAX, mat_file)) {
+            // add matrix name to input
+            name[strlen(name)-1] = '\0';
+            if (strcmp(name, "") == 0) continue;
 
-    // run
-    while (fgets(name, NAME_MAX, mat_file)) {
-        // add matrix name to input
-        name[strlen(name)-1] = '\0';
-        if (strcmp(name, "") == 0) continue;
-        strcpy(&input[ptr1], name);
+            // build command line
+            sprintf(input, "%s %s %d", PROGRAM, name, ks[i]);
 
-        // build path
-        strcpy(&filepath[strlen(PATH)], name);
-        ptr2 = ptr1 + strlen(name); // index of the copying point
-
-        for (i=0; i<NUM_K; i++) { // add k value to input
-            sprintf(k_val, " %d", ks[i]);
-            strcpy(&input[ptr2], k_val);
-
-            for (j=0; j<NUM_RUNS; j++) {
+            for (j = 0; j < NUM_RUNS; j++) {
                 printf("Execution %d: [%s]\n", j, input);
 
                 // launch program
@@ -77,12 +87,12 @@ int main(){
                     exit(-1);
                 }
 
-                tokenize_output(output, &tmp_gfs, &tmp_gfp, &abs, &rel, &tmp_bw);
+                tokenize_output_cuda(output, &tmp_gfs, &tmp_gfp, &abs, &rel, &tmp_bw);
                 gflops_s += tmp_gfs;
                 gflops_p += tmp_gfp;
                 bw += tmp_bw;
 
-                sleep(1);
+                //sleep(1);
             }
 
             // retrieve average gflops
@@ -92,11 +102,11 @@ int main(){
 
             // save on csv
             fprintf(out_file, "%s,%s,%d,%f,%f,%.2e,%.2e,%f\n", name, storage, ks[i], gflops_s, gflops_p, abs, rel, bw);
-        }
 
-        gflops_s = 0;
-        gflops_p = 0;
-        bw = 0;
+            gflops_s = 0;
+            gflops_p = 0;
+            bw = 0;
+        }
     }
 
     fclose(mat_file);

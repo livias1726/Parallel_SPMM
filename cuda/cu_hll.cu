@@ -239,13 +239,13 @@ void compute_hll_dimensions(ELL* ell, int k, HLL **hll, dim3* BLOCK_DIM, dim3* G
  * @param d_ja          the array of column indices (ELL format)
  * @param d_as          the array of nz values (ELL format)
  * */
-int alloc_cuda_hll(HLL* hll, int num_blocks, int **d_maxnz, int **d_hack, int **d_ja, Type **d_as){
+unsigned int alloc_cuda_hll(HLL* hll, int num_blocks, int **d_maxnz, int **d_hack, int **d_ja, Type **d_as){
     int *maxnz = hll->MAXNZ, *ja = hll->JA, *hack = hll->HACK_OFFSET;
     Type *as = hll->AS;
 
     int size = num_blocks * sizeof(int);
-    int size_ja = hack[num_blocks] * sizeof(int);
-    int size_as = hack[num_blocks] * sizeof(Type);
+    unsigned int size_ja = hack[num_blocks] * sizeof(int);
+    unsigned int size_as = hack[num_blocks] * sizeof(Type);
 
     /*
     int tot = size + size + size_ja + size_as;
