@@ -10,8 +10,6 @@ endif()
 
 if (PERFORMANCE)
     add_definitions(-DPERFORMANCE=1)
-elseif(DEBUG)
-    add_definitions(-DDEBUG=1)
 endif ()
 
 if (SAVE)

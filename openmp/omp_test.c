@@ -37,7 +37,7 @@ int main(){
     char input[PATH_MAX];
     char out_filepath[PATH_MAX], output[PATH_MAX];
     char name[NAME_MAX];
-    int ks[NUM_K] = {/*3, 4, 8, 12,*/ 16, 32, 64};
+    int ks[NUM_K] = {3, 4, 8, 12, 16, 32, 64};
     char* storage;
 
 #ifdef ELLPACK

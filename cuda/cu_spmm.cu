@@ -119,7 +119,6 @@ int main(int argc, char** argv) {
     checkCudaErrors(cudaMemcpy(y_p, d_y, m * k * sizeof(Type), cudaMemcpyDeviceToHost));
     timer->stop();
 
-    printf("%d\n", bytes);
     bw = (float)bytes/((timer->getTime())*1.e6);
 
     // -------------------------------------------- check errors ---------------------------------------------------- //
