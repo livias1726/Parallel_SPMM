@@ -24,8 +24,4 @@ endif()
 
 add_executable(cu_spmm cu_spmm.cu ${UTILS_SRC})
 
-if(PERFORMANCE)
-    add_executable(cu_test cu_test.c ../utils/test.c)
-endif()
-
 set_property(TARGET cu_spmm PROPERTY CUDA_ARCHITECTURES 75)

@@ -157,15 +157,11 @@ int main(int argc, char** argv) {
     checkCudaErrors(cudaDeviceReset());
 
     // ---------------------------------------------- Results -------------------------------------------------- //
-#ifdef PERFORMANCE
-    fprintf(stdout, "%f %f %.2e %.2e %f", gflops_s, gflops_p, abs_err, rel_err, bw);
-#else
     fprintf(stdout, "Serial GFLOPS: %f\n"
                     "Parallel GFLOPS: %f\n"
                     "Absolute error: %.2e\n"
                     "Relative error: %.2e\n"
                     "GB/s: %f\n", gflops_s, gflops_p, abs_err, rel_err, bw);
-#endif
 
     return 0;
 }

@@ -26,7 +26,6 @@ int main(int argc, char** argv) {
     // ------------------------------------------------ Set Up ------------------------------------------- //
     // parse command line and input matrix
     process_arguments(argc, argv, &f, &k, &num_threads);
-    /* TODO
     process_mm(&t, f);
 
     // read matrix from file
@@ -34,47 +33,28 @@ int main(int argc, char** argv) {
     fclose(f);
 
     // flops
-    flop = (double)2*k*nz;*/
+    flop = (double)2*k*nz;
 
 
     // ------------------------------------ Memory initialization ----------------------------------- //
-/*TODO
-    alloc_struct(&x, n, k);
-    alloc_struct(&y_s, m ,k);
-    alloc_struct(&y_p, m ,k);
-
-    populate_multivector(x, n, k);*/
-    //print_matrix(x, n, k, "\nMultivector:\n");
-
-    // convert to wanted storage format
-#ifdef ELLPACK
-    ell = read_ell(argv[1]);
-    m = ell->M;
-    n = ell->N;
-    nz = ell->NZ;
-    // TODO ell = read_mm_ell(elems, m, n, nz);
-    //print_ell(ell);
-#else
-    csr = read_csr(argv[1]);
-    m = csr->M;
-    n = csr->N;
-    nz = csr->NZ;
-    //csr = read_mm_csr(elems, m, n, nz);
-    //print_csr(csr);
-#endif
-
-    /*TODO */
     alloc_struct(&x, n, k);
     alloc_struct(&y_s, m ,k);
     alloc_struct(&y_p, m ,k);
 
     populate_multivector(x, n, k);
+    //print_matrix(x, n, k, "\nMultivector:\n");
 
-    // flops
-    flop = (double)2*k*nz;
+    // convert to wanted storage format
+#ifdef ELLPACK
+    ell = read_mm_ell(elems, m, n, nz);
+    //print_ell(ell);
+#else
+    csr = read_mm_csr(elems, m, n, nz);
+    //print_csr(csr);
+#endif
 
     // ----------------------------------------------- Serial SpMM -------------------------------------------- //
-/*TODO
+
     start = omp_get_wtime();
 #ifdef ELLPACK
     serial_product_ell(ell, x, k, y_s);
@@ -84,7 +64,7 @@ int main(int argc, char** argv) {
     stop = omp_get_wtime();
 
     gflops_s = flop/((stop-start)*1e9);
-*/
+
     // ----------------------------------------------- OpenMP SpMM ---------------------------------------------- //
 
     if (m < num_threads) num_threads = m;
@@ -111,7 +91,7 @@ int main(int argc, char** argv) {
     // check results
     // --> double: relative error should be as close as possible to 2.22e−16 (IEEE double precision unit roundoff)
     // --> float: relative error should be as close as possible to 1.19e-07 (IEEE single precision unit roundoff)
-    //TODO get_errors(m*k, y_s, y_p, &abs_err, &rel_err);
+    get_errors(m*k, y_s, y_p, &abs_err, &rel_err);
 
 #ifdef SAVE
     save_result(argv[1], y_p, m, k);
@@ -130,14 +110,11 @@ int main(int argc, char** argv) {
     clean_up(3, (void*[]){x, y_s, y_p});
 
     // ---------------------------------------------- Results -------------------------------------------------- //
-#ifdef PERFORMANCE
-    fprintf(stdout, "%f %f %.2e %.2e", gflops_s, gflops_p, abs_err, rel_err);
-#else
+
     fprintf(stdout, "Serial GFLOPS: %f\n"
                     "Parallel GFLOPS: %f\n"
                     "Absolute error: %.2e\n"
                     "Relative error: %.2e\n", gflops_s, gflops_p, abs_err, rel_err);
-#endif
 
     return 0;
 }
