@@ -210,14 +210,14 @@ void compute_csr_dimensions(CSR* csr, int k, int* blocks, int *num_blocks, dim3*
     *GRID_DIM = dim3(nb-1);
 }
 
-int alloc_cuda_csr(CSR* csr, int* blocks, int num_blocks, int **d_irp, int **d_ja, Type **d_as, int **d_blocks){
+unsigned int alloc_cuda_csr(CSR* csr, int* blocks, int num_blocks, int **d_irp, int **d_ja, Type **d_as, int **d_blocks){
     int m = csr->M, nz = csr->NZ;
     int *irp = csr->IRP, *ja = csr->JA;
     Type *as = csr->AS;
 
-    int size_irp = (m+1)*sizeof(int);
-    int size_ja = nz*sizeof(int);
-    int size_as = nz*sizeof(Type);
+    unsigned int size_irp = (m+1)*sizeof(int);
+    unsigned int size_ja = nz*sizeof(int);
+    unsigned int size_as = nz*sizeof(Type);
     int size_blocks = num_blocks*sizeof(int);
 
     checkCudaErrors(cudaMalloc((void**) d_irp, size_irp));

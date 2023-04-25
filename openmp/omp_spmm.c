@@ -37,6 +37,7 @@ int main(int argc, char** argv) {
 
 
     // ------------------------------------ Memory initialization ----------------------------------- //
+
     alloc_struct(&x, n, k);
     alloc_struct(&y_s, m ,k);
     alloc_struct(&y_p, m ,k);

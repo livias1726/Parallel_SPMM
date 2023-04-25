@@ -15,7 +15,8 @@ int main(int argc, char** argv) {
     int *d_ja;
 
     // performance
-    float flop, gflops_s, gflops_p, bytes, bw;
+    unsigned int bytes;
+    float flop, gflops_s, gflops_p, bw;
     Type abs_err, rel_err;
     StopWatchInterface *timer = 0;
 
