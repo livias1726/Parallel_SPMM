@@ -9,14 +9,13 @@ int main(int argc, char** argv) {
     // matrices
     MM_typecode t;
     FILE *f;
-    int k, m, n, nz;
+    int k, m, n, nz, z;
     Type *x, *d_x, *y_s, *y_p, *d_y;
     Type *d_as;
     int *d_ja;
 
     // performance
-    unsigned int bytes;
-    float flop, gflops_s, gflops_p, bw;
+    float flop, gflops_s, gflops_p;
     Type abs_err, rel_err;
     StopWatchInterface *timer = 0;
 
@@ -69,19 +68,21 @@ int main(int argc, char** argv) {
 #endif
 
     // ------------------------------------------- Serial CPU SpMM --------------------------------------------- //
-
-    timer->start();
-
+    gflops_s = 0;
+    for (z = 0; z < MAX_NUM_RUNS; ++z) {
+        timer->start();
 #ifdef ELLPACK
-    serial_product_ell(ell, x, k, y_s);
+        serial_product_ell(ell, x, k, y_s);
 #else
-    serial_product_csr(csr, x, k, y_s);
+        serial_product_csr(csr, x, k, y_s);
 #endif
+        timer->stop();
 
-    timer->stop();
+        gflops_s += (float)flop/((timer->getTime())*1.e6);
+        timer->reset();
+    }
 
-    gflops_s = (float)flop/((timer->getTime())*1.e6);
-    timer->reset();
+    gflops_s /= MAX_NUM_RUNS;
 
     // --------------------------------------------- GPU SpMM -------------------------------------------------- //
 
@@ -89,41 +90,39 @@ int main(int argc, char** argv) {
 #ifdef ELLPACK
     compute_hll_dimensions(ell, k, &hll, &BLOCK_DIM, &GRID_DIM, &shared_mem);
     //print_hll(hll, GRID_DIM.x);
-    bytes = alloc_cuda_hll(hll, GRID_DIM.x, &d_maxnz, &d_hack_offset, &d_ja, &d_as);
+    alloc_cuda_hll(hll, GRID_DIM.x, &d_maxnz, &d_hack_offset, &d_ja, &d_as);
 #else
     blocks = (int*)malloc((m+1)*sizeof(int));
     compute_csr_dimensions(csr, k, blocks, &num_blocks, &BLOCK_DIM, &GRID_DIM, &shared_mem);
-    bytes = alloc_cuda_csr(csr, blocks, num_blocks, &d_irp, &d_ja, &d_as, &d_blocks);
+    alloc_cuda_csr(csr, blocks, num_blocks, &d_irp, &d_ja, &d_as, &d_blocks);
 #endif
 
     // to avoid bank conflicts when double values are used
     if (sizeof(Type) == 8) checkCudaErrors(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
-    bytes += alloc_cuda_spmm(&d_x, &d_y, x, m, n, k);
+    alloc_cuda_spmm(&d_x, &d_y, x, m, n, k);
 
     // product
-    timer->start();
-
+    gflops_p = 0;
+    for (z = 0; z < MAX_NUM_RUNS; ++z) {
+        timer->start();
 #ifdef ELLPACK
-    spmm_hll_kernel<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, d_maxnz, d_hack_offset, d_ja, d_as, d_x, k, d_y);
+        spmm_hll_kernel<<<GRID_DIM, BLOCK_DIM,shared_mem>>>(m, d_maxnz, d_hack_offset, d_ja, d_as, d_x, k, d_y);
 #else
-    spmm_csr_vector_kernel<<<GRID_DIM, BLOCK_DIM, shared_mem>>>(d_irp, d_ja, d_as, k, d_x, d_blocks, d_y);
+        spmm_csr_vector_kernel<<<GRID_DIM, BLOCK_DIM, shared_mem>>>(d_irp, d_ja, d_as, k, d_x, d_blocks, d_y);
 #endif
+        checkCudaErrors(cudaDeviceSynchronize());
+        timer->stop();
 
-    checkCudaErrors(cudaDeviceSynchronize());
-    timer->stop();
+        gflops_p += (float)flop/((timer->getTime())*1.e6);
+        timer->reset();
+        //if (z < MAX_NUM_RUNS-1) checkCudaErrors(cudaMemset(d_y, 0, m * k * sizeof(Type)));
+    }
 
-    gflops_p = (float)flop/((timer->getTime())*1.e6);
+    gflops_p /= MAX_NUM_RUNS;
 
-    // ------------------------------------------------ bandwidth computation ----------------------------------------//
-    timer->start();
     checkCudaErrors(cudaMemcpy(y_p, d_y, m * k * sizeof(Type), cudaMemcpyDeviceToHost));
-    timer->stop();
-
-    bw = (float)bytes/((timer->getTime())*1.e6);
 
     // -------------------------------------------- check errors ---------------------------------------------------- //
-    // --> double: relative error should be as close as possible to 2.22e−16 (IEEE double precision unit roundoff)
-    // --> float: relative error should be as close as possible to 1.19e-07 (IEEE single precision unit roundoff)
     get_errors(m*k, y_s, y_p, &abs_err, &rel_err);
 
 #ifdef SAVE
@@ -159,13 +158,12 @@ int main(int argc, char** argv) {
 
     // ---------------------------------------------- Results -------------------------------------------------- //
 #ifdef PERFORMANCE
-    fprintf(stdout, "%f %f %.2e %.2e %f", gflops_s, gflops_p, abs_err, rel_err, bw);
+    fprintf(stdout, "%f %f %.2e %.2e", gflops_s, gflops_p, abs_err, rel_err);
 #else
     fprintf(stdout, "Serial GFLOPS: %f\n"
                     "Parallel GFLOPS: %f\n"
                     "Absolute error: %.2e\n"
-                    "Relative error: %.2e\n"
-                    "GB/s: %f\n", gflops_s, gflops_p, abs_err, rel_err, bw);
+                    "Relative error: %.2e\n", gflops_s, gflops_p, abs_err, rel_err);
 #endif
 
     return 0;

@@ -80,7 +80,7 @@ int main(){
             while (fgets(output, PATH_MAX, pipe)) {
                 tokenize_output_omp(output, &gflops_s, &gflops_p, &abs, &rel);
                 // save on csv
-                fprintf(stdout, "%s,%s,%d,%d,%f,%f,%.2e,%.2e\n", name, storage, ks[i], j, gflops_s, gflops_p, abs, rel);
+                fprintf(out_file, "%s,%s,%d,%d,%f,%f,%.2e,%.2e\n", name, storage, ks[i], j, gflops_s, gflops_p, abs, rel);
                 j++;
             }
 

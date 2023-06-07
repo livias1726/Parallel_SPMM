@@ -17,6 +17,9 @@ extern "C"{
 // UTILS
 #define FULL_WARP_MASK 0xffffffff
 
+// TEST
+#define MAX_NUM_RUNS 10
+
 //--------------------------------------------- Signatures ---------------------------------------------------------//
 void process_arguments(int argc, char **argv, FILE **f, int *k);
 unsigned int alloc_cuda_spmm(Type **d_x, Type **d_y, const Type *x, int m, int n, int k);

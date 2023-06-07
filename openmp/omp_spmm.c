@@ -10,7 +10,7 @@ int main(int argc, char** argv) {
     FILE *f;
     int z, k, m, n, nz, num_threads, max_threads;
 
-    double flop, gflops_s = 0, gflops_p = 0;
+    double flop, gflops_s, gflops_p;
     double start, stop;
     Type abs_err, rel_err;
 
@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
 #endif
 
     // ----------------------------------------------- Serial SpMM -------------------------------------------- //
-
+    gflops_s = 0;
     for (z = 0; z < MAX_NUM_RUNS; ++z) {
         start = omp_get_wtime();
 #ifdef ELLPACK
@@ -63,14 +63,11 @@ int main(int argc, char** argv) {
         serial_product_csr(csr, x, k, y_s);
 #endif
         stop = omp_get_wtime();
-
         gflops_s += flop / ((stop - start) * 1e9);
     }
-
     gflops_s /= MAX_NUM_RUNS;
 
     // ----------------------------------------------- OpenMP SpMM ---------------------------------------------- //
-
     num_threads = 1;
     max_threads = (m < MAX_NUM_THREADS) ? m : MAX_NUM_THREADS;
 #ifndef ELLPACK
@@ -79,12 +76,11 @@ int main(int argc, char** argv) {
 #endif
 
     while(num_threads <= max_threads){
-
+        gflops_p = 0;
 #ifndef ELLPACK
         csr_nz_balancing(num_threads, nz, csr->IRP, csr->M, thread_rows);
         csr_init_struct(y_p, thread_rows, num_threads, k);
 #endif
-
         for (z = 0; z < MAX_NUM_RUNS; ++z) {
             start = omp_get_wtime();
 #ifdef ELLPACK
@@ -93,15 +89,12 @@ int main(int argc, char** argv) {
             spmm_csr(csr, thread_rows, num_threads, x, k, y_p);
 #endif
             stop = omp_get_wtime();
-
             gflops_p += flop/((stop-start)*1e9);
             if (z < MAX_NUM_RUNS-1) memset(y_p, 0, m * k * sizeof(Type));
         }
-
         gflops_p /= MAX_NUM_RUNS;
+
         // check results
-        // --> double: relative error should be as close as possible to 2.22e−16 (IEEE double precision unit roundoff)
-        // --> float: relative error should be as close as possible to 1.19e-07 (IEEE single precision unit roundoff)
         get_errors(m*k, y_s, y_p, &abs_err, &rel_err);
 
         // ---------------------------------------------- Results -------------------------------------------------- //
