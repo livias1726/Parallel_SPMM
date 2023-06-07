@@ -12,7 +12,7 @@ void spmm_ell_stream(int start, int end, const int *ja, const Type *as, Type* x,
         x_r = &x[ja[i] * k]; // prefetching of the row in x to read from
 
         #pragma ivdep
-        #pragma omp unroll partial
+        #pragma omp unroll
         for (z = 0; z < k; z++) y[z] += val * x_r[z];
     }
 }
@@ -28,11 +28,11 @@ void spmm_ell_vector_64(int *ja, Type *as, int start, int end, Type* x, int k, T
 
     __m512d t[k];
 #pragma ivdep
-#pragma omp unroll partial
+#pragma omp unroll
     for (z = 0; z < k; z++) t[z] = _mm512_setzero_pd(); // init t vector
 
     #pragma ivdep
-    #pragma omp unroll partial
+    #pragma omp unroll
     for (int idx = start; idx < end; idx += PD_STRIDE) { // vectorization of 8 elements per iteration
         if (as[idx] == 0) break;    // break loop if padding reached
 
@@ -50,7 +50,7 @@ void spmm_ell_vector_64(int *ja, Type *as, int start, int end, Type* x, int k, T
     }
 
     #pragma ivdep
-    #pragma omp unroll partial
+    #pragma omp unroll
     for (z = 0; z < k; z++) {
         y[z] += _mm512_reduce_add_pd(t[z]);
         t[z] = _mm512_setzero_pd();
@@ -68,11 +68,11 @@ void spmm_ell_vector_32(int *ja, Type *as, int start, int end, Type* x, int k, T
 
     __m512 t[k];
 #pragma ivdep
-#pragma omp unroll partial
+#pragma omp unroll
     for (z = 0; z < k; z++) t[z] = _mm512_setzero_ps(); // init t vector
 
     #pragma ivdep
-    #pragma omp unroll partial
+    #pragma omp unroll
     for (int idx = start; idx < end; idx += PS_STRIDE) { // vectorization of 16 elements per iteration
         if (as[idx] == 0) break;    // break loop if padding reached
 
@@ -90,7 +90,7 @@ void spmm_ell_vector_32(int *ja, Type *as, int start, int end, Type* x, int k, T
     }
 
 #pragma ivdep
-#pragma omp unroll partial
+#pragma omp unroll
     for (z = 0; z < k; z++) {
         y[z] += _mm512_reduce_add_ps(t[z]);
         t[z] = _mm512_setzero_ps();
@@ -111,7 +111,7 @@ void spmm_ell(ELL* mat, int threads, Type* x, int k, Type* y) {
     int maxnz = mat->MAXNZ, rows = mat->M, *ja = mat->JA;
     Type *as = mat->AS;
 
-    int stride = STRIDE;
+    int stride = PD_STRIDE;
 
     int vector = maxnz / stride;
     int j = stride * vector;

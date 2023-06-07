@@ -19,8 +19,6 @@ void spmm_csr_64(CSR *mat, const int* rows_load, int threads, const Type* x, int
     const __m256i scale = MM8(k);
     const __m256i one = MM8(1);
 
-    if (m < threads) threads = m - 1;
-
 #pragma omp parallel num_threads(threads)
     {
         int j, z, end, r_y, r_x, tid = omp_get_thread_num();
@@ -29,7 +27,7 @@ void spmm_csr_64(CSR *mat, const int* rows_load, int threads, const Type* x, int
         __m512d vals, x_r, t[k];
 
         #pragma ivdep
-        #pragma omp unroll partial
+        #pragma omp unroll
         for (z = 0; z < k; z++) t[z] = _mm512_setzero_pd(); // init t vector
 
         for (int i = rows_load[tid]; i < rows_load[tid + 1]; ++i) { // thread gets the row to process
@@ -41,7 +39,7 @@ void spmm_csr_64(CSR *mat, const int* rows_load, int threads, const Type* x, int
                 // perform a SIMD product on chunks of 8 non-zeros
                 do{
                     vals = _mm512_loadu_pd(&as[j]);                     // load 8 64-bit elements
-                    cols = _mm256_loadu_si256((__m256i * ) & ja[j]);        // load 8 32-bit elements columns
+                    cols = _mm256_loadu_si256((__m256i * ) & ja[j]);    // load 8 32-bit elements columns
                     cols = _mm256_mullo_epi32(cols, scale);             // scale col index to be on the first column of x
                     x_r = _mm512_i32gather_pd(cols, x, sizeof(Type));   // build 8 64-bit elements from x and cols
                     t[0] = _mm512_fmadd_pd(vals, x_r, t[0]);            // execute a fused multiply-add
@@ -58,7 +56,7 @@ void spmm_csr_64(CSR *mat, const int* rows_load, int threads, const Type* x, int
 
                 // reduce all 64-bit elements in t by addition
                 #pragma ivdep
-                #pragma omp unroll partial
+                #pragma omp unroll
                 for (z = 0; z < k; z++) {
                     y[r_y + z] += _mm512_reduce_add_pd(t[z]);
                     t[z] = _mm512_setzero_pd();
@@ -71,7 +69,7 @@ void spmm_csr_64(CSR *mat, const int* rows_load, int threads, const Type* x, int
                 r_x = ja[j] * k;
 
                 #pragma ivdep
-                #pragma omp unroll partial
+                #pragma omp unroll
                 for (z = 0; z < k; z++) y[r_y + z] += val * x[r_x + z];
             }
         }
@@ -107,7 +105,7 @@ void spmm_csr_32(CSR *mat, const int* rows_load, int threads, const Type* x, int
         __m512 vals, x_r, t[k];
 
         #pragma ivdep
-        #pragma omp unroll partial
+        #pragma omp unroll
         for (z = 0; z < k; z++) t[z] = _mm512_setzero_ps();
 
         for (int i = rows_load[tid]; i < rows_load[tid + 1]; ++i) { // thread gets the row to process
@@ -137,7 +135,7 @@ void spmm_csr_32(CSR *mat, const int* rows_load, int threads, const Type* x, int
 
                 // reduce all 32-bit elements in t by addition
                 #pragma ivdep
-                #pragma omp unroll partial
+                #pragma omp unroll
                 for (z = 0; z < k; z++) {
                     y[r_y + z] += _mm512_reduce_add_ps(t[z]);
                     t[z] = _mm512_setzero_ps();
@@ -150,7 +148,7 @@ void spmm_csr_32(CSR *mat, const int* rows_load, int threads, const Type* x, int
                 r_x = ja[j] * k;
 
                 #pragma ivdep
-                #pragma omp unroll partial
+                #pragma omp unroll
                 for (z = 0; z < k; z++) y[r_y + z] += val * x[r_x + z];
             }
         }
