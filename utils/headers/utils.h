@@ -12,6 +12,13 @@
     #define SCPA_PROJECT_UTILS_H
 #endif
 
+// CPU
+#define DL1 32 * 1024
+#define IL1 32 * 1024
+#define L2 1024 * 1024
+#define L3 14080 * 1024
+
+
 #define ROUND_UP(a,b) ((a+b-1)/b)
 #define ROUND_UP_MULT(a, b) (ROUND_UP(a,b) * b)
 
@@ -108,6 +115,7 @@ void malloc_handler(int, void**);
 void clean_up(int, void**);
 void populate_multivector(Type*, int, int);
 void get_errors(int, Type*, Type*, Type*, Type*);
+void clear_cache(double*);
 
 
 

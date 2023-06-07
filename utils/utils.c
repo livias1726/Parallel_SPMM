@@ -81,3 +81,8 @@ void get_errors(int elems, Type* seq, Type* par, double* abs, double* rel){
 }
   */
 
+void clear_cache(double *cooler){
+    for (int i = 0; i < L3/8; ++i) {
+        cooler[i] = 0;
+    }
+}
