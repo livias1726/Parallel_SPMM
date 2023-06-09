@@ -23,3 +23,10 @@ void process_arguments(int argc, char** argv, FILE **f, int* k, int* num_threads
     // set number of threads
     *num_threads = (int)strtol(argv[3], NULL, 10);
 }
+
+void clear_cache(Type *cooler, int threads){
+    #pragma omp parallel for num_threads(threads) shared(cooler) default(none)
+    for (int i = 0; i < L3/4; ++i) {
+        cooler[i] = 0;
+    }
+}

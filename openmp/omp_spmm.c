@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
 #endif
 
     // vectors to cool the cache
-    double *cooler = (double*) malloc(L3);
+    Type *cooler = (Type*) malloc(L3*2);
     malloc_handler(1, (void *[]) {cooler});
 
     // ----------------------------------------------- Serial SpMM -------------------------------------------- //
@@ -69,7 +69,7 @@ int main(int argc, char** argv) {
         stop = omp_get_wtime();
         gflops_s += flop / ((stop - start) * 1e9);
 
-        clear_cache(cooler);
+        clear_cache(cooler, 1);
     }
     gflops_s /= MAX_NUM_RUNS;
 
@@ -97,7 +97,7 @@ int main(int argc, char** argv) {
             stop = omp_get_wtime();
             gflops_p += flop/((stop-start)*1e9);
             if (z < MAX_NUM_RUNS-1) memset(y_p, 0, m * k * sizeof(Type));
-            clear_cache(cooler);
+            clear_cache(cooler, num_threads);
         }
         gflops_p /= MAX_NUM_RUNS;
 
